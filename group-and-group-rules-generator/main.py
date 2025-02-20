@@ -2,54 +2,43 @@ import argparse
 import os
 from groups import get_okta_domain, fetch_okta_groups, process_and_export_groups
 from group_rules import get_okta_domain as get_okta_domain_rules, fetch_okta_group_rules, process_and_export_rules
-from terraform_generator import generate_terraform_resources, generate_terraform_imports, group_data, group_rule_data
-
-def run_groups(args):
-    """Run the Okta Groups export."""
-    api_token = args.token or os.getenv("OKTA_API_TOKEN")
-    if not api_token:
-        print("Error: API token must be provided either as an argument or via the OKTA_API_TOKEN environment variable.")
-        return
-
-    okta_domain = get_okta_domain(args.subdomain, args.domain)
-    groups = fetch_okta_groups(okta_domain, api_token)
-    
-    if groups:
-        process_and_export_groups(groups, args.output)
-    else:
-        print("No groups found.")
-
-def run_group_rules(args):
-    """Run the Okta Group Rules export."""
-    api_token = args.token or os.getenv("OKTA_API_TOKEN")
-    if not api_token:
-        print("Error: API token must be provided either as an argument or via the OKTA_API_TOKEN environment variable.")
-        return
-
-    okta_domain = get_okta_domain_rules(args.subdomain, args.domain)
-    rules = fetch_okta_group_rules(okta_domain, api_token)
-
-    if rules:
-        process_and_export_rules(rules, args.output)
-    else:
-        print("No group rules found.")
+from terraform_generator import load_csv, generate_terraform_resources, generate_terraform_imports
 
 def run_terraform(args):
-    """Run the Terraform Generator."""
+    """Run the Terraform Generator with provided CSV file paths."""
+    files = {
+        "prod_groups": args.prod_groups,
+        "prod_rules": args.prod_rules,
+        "preview_groups": args.preview_groups,  # Optional
+        "preview_rules": args.preview_rules,  # Optional
+    }
+
+    # Load only existing CSV files
+    group_data = {}
+    group_rule_data = {}
+
+    for env in ["prod", "preview"]:
+        if files[f"{env}_groups"]:
+            group_data[env] = load_csv(files[f"{env}_groups"])
+        else:
+            print(f"⚠️  Skipping {env}_groups: No file provided.")
+
+        if files[f"{env}_rules"]:
+            group_rule_data[env] = load_csv(files[f"{env}_rules"])
+        else:
+            print(f"⚠️  Skipping {env}_rules: No file provided.")
+
+    # Generate Terraform configuration
     terraform_output = generate_terraform_resources(group_data, group_rule_data)
     import_output = generate_terraform_imports(group_data, group_rule_data)
 
-    resource_file = "generated-terraform.tf"
-    import_file = "terraform-imports.tf"
-    
-    with open(resource_file, "w") as f:
+    # Save output files
+    with open("generated-terraform.tf", "w") as f:
         f.write(terraform_output)
-
-    with open(import_file, "w") as f:
+    with open("terraform-imports.tf", "w") as f:
         f.write(import_output)
 
-    print(f"Terraform resource file generated: {resource_file}")
-    print(f"Terraform import file generated: {import_file}")
+    print("✅ Terraform files successfully generated!")
 
 def main():
     """Main entry point for CLI."""
@@ -73,8 +62,12 @@ def main():
     parser_group_rules.add_argument("--output", default="okta_group_rules.csv", help="Output CSV file")
     parser_group_rules.set_defaults(func=run_group_rules)
 
-    # Terraform Command
+    # Terraform Command (✅ Preview files are now optional!)
     parser_terraform = subparsers.add_parser("terraform", help="Generate Terraform configuration from Okta data")
+    parser_terraform.add_argument("--prod_groups", type=str, required=True, help="File path for production groups CSV")
+    parser_terraform.add_argument("--prod_rules", type=str, required=True, help="File path for production rules CSV")
+    parser_terraform.add_argument("--preview_groups", type=str, required=False, help="(Optional) File path for preview groups CSV")
+    parser_terraform.add_argument("--preview_rules", type=str, required=False, help="(Optional) File path for preview rules CSV")
     parser_terraform.set_defaults(func=run_terraform)
 
     args = parser.parse_args()

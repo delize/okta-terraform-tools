@@ -2,17 +2,35 @@ import json
 import os
 import pandas as pd
 import re
+import argparse
 
 # Get the script directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # File names (relative to the script directory)
-files = {
-    "prod_groups": "prod-groups-export.csv",
-    "prod_rules": "prod-group-rules-export.csv",
-    "preview_groups": "preview-groups-export.csv",
-    "preview_rules": "preview-group-rules-export.csv",
-}
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Specify file paths for different exports.")
+
+    parser.add_argument("--prod_groups", type=str, help="File path for prod_groups")
+    parser.add_argument("--prod_rules", type=str, help="File path for prod_rules")
+    parser.add_argument("--preview_groups", type=str, help="File path for preview_groups")
+    parser.add_argument("--preview_rules", type=str, help="File path for preview_rules")
+
+    args = parser.parse_args()
+
+    files = {
+        "prod_groups": args.prod_groups,
+        "prod_rules": args.prod_rules,
+        "preview_groups": args.preview_groups,
+        "preview_rules": args.preview_rules,
+    }
+
+    # Check existence and warn instead of exiting
+    for name, path in files.items():
+        if path and not os.path.exists(path):
+            print(f"Warning: The specified file '{path}' for {name} does not exist. The script will proceed with an empty dataset.")
+
+    return files
 
 # Function to load CSV data
 def load_csv(filename):
