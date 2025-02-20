@@ -65,9 +65,9 @@ def process_and_export_groups(groups, output_csv="okta_groups_dynamic.csv"):
                 if isinstance(value, bool):
                     row[key] = "true" if value else "false"
                 elif isinstance(value, str):
-                    row[key] = value if value.strip() else "Not Available"
+                    row[key] = value if value.strip() else None
                 else:
-                    row[key] = "Not Available"
+                    row[key] = None
             
             writer.writerow(row)
     
