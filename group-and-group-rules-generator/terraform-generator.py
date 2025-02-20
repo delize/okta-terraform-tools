@@ -69,6 +69,20 @@ def escape_for_terraform_resources(value):
         return value.replace('"', '\\"')
     return value
 
+# Function to ensure Terraform-compatible lists for group_assignments
+def format_group_assignments(value):
+    """Ensures group_assignments is correctly formatted as a Terraform-compatible list."""
+    if isinstance(value, list):
+        return json.dumps(value)
+    elif isinstance(value, str):
+        value = value.strip()
+        if "," in value:
+            return json.dumps(value.split(","))
+        elif value:
+            return json.dumps([value])
+    return "[]"
+
+
 # Load group and rule data
 group_data = {env: load_csv(files[f"{env}_groups"]) for env in ["preview", "prod"]}
 group_rule_data = {env: load_csv(files[f"{env}_rules"]) for env in ["preview", "prod"]}
@@ -91,7 +105,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             terraform_config.append(f'  name        = "{group_name}"')
             terraform_config.append(f'  description = {json.dumps(group_description) if group_description else "null"}')
             terraform_config.append(f'  custom_profile_attributes = jsonencode({{')
-            terraform_config.append(f'    "admin_notes" = {json.dumps(admin_notes) if admin_notes else "null"},')
+            terraform_config.append(f'    "adminNotes" = {json.dumps(admin_notes) if admin_notes else "null"},')
             terraform_config.append(f'    "groupDynamic" = {group_dynamic},')
             terraform_config.append(f'    "groupOwner" = {json.dumps(group_owner) if group_owner else "null"}')
             terraform_config.append(f'  }})')
@@ -103,7 +117,7 @@ def generate_terraform_resources(group_data, group_rule_data):
         for _, rule in rules.iterrows():
             rule_id = clean_value(rule.get("id"))
             rule_name = escape_for_terraform_resources(clean_value(rule.get("name")))
-            group_assignments = format_list(clean_value(rule.get("groupIds", [])))
+            group_assignments = format_group_assignments(clean_value(rule.get("groupIds", [])))
             # users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
             users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
 
