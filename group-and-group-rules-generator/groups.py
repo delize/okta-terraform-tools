@@ -15,7 +15,7 @@ def get_okta_domain(subdomain, domain_flag):
     return f"https://{subdomain}.{domain}"
 
 def fetch_okta_groups(okta_domain, api_token):
-    """Fetch all groups from Okta API with pagination."""
+    """Fetch all groups from Okta API with pagination, filtering only OKTA_GROUP types."""
     url = f"{okta_domain}/api/v1/groups"
     headers = {"Authorization": f"SSWS {api_token}", "Accept": "application/json"}
     groups = []
@@ -63,11 +63,15 @@ def process_and_export_groups(groups, output_csv="okta_groups_dynamic.csv"):
                     continue
                 value = profile.get(key)
                 if isinstance(value, bool):
-                    row[key] = "true" if value else "false"
+                    row[key] = value  # Keep actual booleans as is
                 elif isinstance(value, str):
-                    row[key] = value if value.strip() else None
+                    stripped_value = value.strip()
+                    if stripped_value.lower() in ["true", "false"]:
+                        row[key] = stripped_value.lower() == "true"  # Convert "true" to True, "false" to False
+                    else:
+                        row[key] = stripped_value if stripped_value else None  # Keep as string or None
                 else:
-                    row[key] = None
+                    row[key] = None  # Default for other types
             
             writer.writerow(row)
     
