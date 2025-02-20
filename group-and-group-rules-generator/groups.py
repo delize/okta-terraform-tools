@@ -27,7 +27,8 @@ def fetch_okta_groups(okta_domain, api_token):
             return []
         
         data = response.json()
-        groups.extend(data)
+        # Filter only OKTA_GROUP types
+        groups.extend([group for group in data if group.get("type") == "OKTA_GROUP"])
 
         url = None
         if "link" in response.headers:
