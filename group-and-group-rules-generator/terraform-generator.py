@@ -65,7 +65,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             group_id = clean_value(group.get("id"))
             group_description = clean_value(group.get("description"))
             admin_notes = clean_value(group.get("admin_notes"))
-            group_dynamic = clean_value(group.get("groupDynamic", False))
+            group_dynamic = process_group_dynamic(group.get("groupDynamic"))
             group_owner = clean_value(group.get("groupOwner"))
             
             terraform_config.append(f'resource "okta_group" "group_{env}_{group_id}" {{')
@@ -74,7 +74,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             terraform_config.append(f'  description = {json.dumps(group_description) if group_description else "null"}')
             terraform_config.append(f'  custom_profile_attributes = jsonencode({{')
             terraform_config.append(f'    "admin_notes" = {json.dumps(admin_notes) if admin_notes else "null"},')
-            terraform_config.append(f'    "groupDynamic" = {group_dynamic if group_dynamic is not None else "null"},')
+            terraform_config.append(f'    "groupDynamic" = {group_dynamic},')
             terraform_config.append(f'    "groupOwner" = {json.dumps(group_owner) if group_owner else "null"}')
             terraform_config.append(f'  }})')
             terraform_config.append(f'  lifecycle {{ ignore_changes = [skip_users] }}')
