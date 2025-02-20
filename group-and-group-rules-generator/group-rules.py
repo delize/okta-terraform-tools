@@ -41,20 +41,33 @@ def fetch_okta_group_rules(okta_domain, api_token):
 def process_and_export_rules(rules, output_csv="okta_group_rules.csv"):
     """Process rule data dynamically and export it to CSV."""
     
-    headers = set(["id", "name", "status", "created", "lastUpdated", "allGroupsValid", "excludedUsers", "excludedGroups"])
+    headers = {"id", "name", "status", "created", "lastUpdated", "allGroupsValid", "excludedUsers", "excludedGroups"}
+    
+    for rule in rules:
+        conditions = rule.get("conditions", {})
+        actions = rule.get("actions", {}).get("assignUserToGroups", {})
+        embedded = rule.get("_embedded", {}).get("groupIdToGroupNameMap", {})
+
+        if "expression" in conditions:
+            headers.update(conditions["expression"].keys())
+        
+        headers.update(actions.keys())
+        headers.update(embedded.keys())
+
+    headers = sorted(headers)
     
     with open(output_csv, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers)
+        writer = csv.DictWriter(csvfile, fieldnames=headers, quoting=csv.QUOTE_NONNUMERIC)
         writer.writeheader()
 
         for rule in rules:
             row = {
                 "id": rule.get("id", None),
-                "name": rule.get("name", None),
-                "status": rule.get("status"),  # Keep status as returned by API
+                "name": rule.get("name", "").replace('"', ''),
+                "status": rule.get("status"),
                 "created": rule.get("created", None),
                 "lastUpdated": rule.get("lastUpdated", None),
-                "allGroupsValid": rule.get("allGroupsValid", False)  # Keep as actual boolean
+                "allGroupsValid": rule.get("allGroupsValid", False)
             }
             
             conditions = rule.get("conditions", {})
@@ -66,7 +79,7 @@ def process_and_export_rules(rules, output_csv="okta_group_rules.csv"):
             
             if "expression" in conditions:
                 for key in conditions["expression"]:
-                    row[key] = conditions["expression"].get(key, None)
+                    row[key] = conditions["expression"].get(key, "").replace('"', '')
             
             for key in actions:
                 row[key] = ",".join(actions.get(key, [])) if actions.get(key, []) else None
@@ -74,6 +87,7 @@ def process_and_export_rules(rules, output_csv="okta_group_rules.csv"):
             for key, value in embedded.items():
                 row[key] = value
 
+            row = {key: row.get(key, None) for key in headers}
             writer.writerow(row)
     
     print(f"CSV file '{output_csv}' has been created successfully.")
