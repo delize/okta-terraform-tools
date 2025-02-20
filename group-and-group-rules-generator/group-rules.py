@@ -79,7 +79,8 @@ def process_and_export_rules(rules, output_csv="okta_group_rules.csv"):
             
             if "expression" in conditions:
                 for key in conditions["expression"]:
-                    row[key] = conditions["expression"].get(key, "").replace('"', '')
+                    row[key] = conditions["expression"].get(key, "")
+                    #.replace('"', '')
             
             for key in actions:
                 row[key] = ",".join(actions.get(key, [])) if actions.get(key, []) else None

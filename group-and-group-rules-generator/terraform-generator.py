@@ -38,6 +38,24 @@ def process_group_dynamic(value):
             return "null"
     return "null"
 
+# Function to ensure Terraform-compatible lists
+def format_list(value):
+    """Ensures a value is correctly formatted as a Terraform-compatible list."""
+    if isinstance(value, list):
+        return json.dumps(value)
+    elif isinstance(value, str):
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            return value  # Already a list format
+        elif value:
+            return json.dumps([value])  # Wrap single values in a list
+    return "[]"  # Default to an empty list
+
+# Function to ensure Terraform-compatible lists for users_excluded
+def format_users_excluded(value):
+    """Ensures users_excluded is always an empty array."""
+    return "[]"
+
 # Function to clean values for Terraform
 def clean_value(value, default=None):
     """Ensure proper handling of null values for Terraform."""
@@ -85,10 +103,13 @@ def generate_terraform_resources(group_data, group_rule_data):
         for _, rule in rules.iterrows():
             rule_id = clean_value(rule.get("id"))
             rule_name = escape_for_terraform_resources(clean_value(rule.get("name")))
-            group_assignments = json.dumps(clean_value(rule.get("groupIds", [])))
+            group_assignments = format_list(clean_value(rule.get("groupIds", [])))
+            # users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
+            users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
+
             expression_type = clean_value(rule.get("type", "urn:okta:expression:1.0"))
             expression_value = escape_for_terraform_resources(clean_value(rule.get("value")))
-            users_excluded = json.dumps(clean_value(rule.get("excludedUsers", [])))
+            
             
             terraform_config.append(f'resource "okta_group_rule" "rule_{env}_{rule_id}" {{')
             terraform_config.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
