@@ -1,9 +1,8 @@
 # What is this?
 
+This generator will generate resource and import blocks, using imports in a per environment setup, so that you don't have to write 1000s of resources in Terraform Manually.
 
 # How to use
-
-This generator will generate resource and import blocks, using imports in a per environment setup, so that you don't import a
 
 ## Initial Steps
 
