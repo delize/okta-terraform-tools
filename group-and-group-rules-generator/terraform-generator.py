@@ -16,114 +16,175 @@ files = {
 
 # Function to load CSV data
 def load_csv(filename):
-    """Load CSV file from the script's directory."""
+    """Load CSV file from the script's directory, handling missing files gracefully."""
     file_path = os.path.join(script_dir, filename)
+    if not os.path.exists(file_path):
+        print(f"Warning: File not found: {file_path}. Returning empty DataFrame.")
+        return pd.DataFrame()
     return pd.read_csv(file_path)
+
+# Function to handle boolean values for groupDynamic
+def process_group_dynamic(value):
+    """Ensure groupDynamic is properly formatted as a boolean or null."""
+    if isinstance(value, bool):
+        return str(value).lower()
+    elif isinstance(value, str):
+        value = value.strip().lower()
+        if value in ["true", '"true"']:
+            return "true"
+        elif value in ["false", '"false"']:
+            return "false"
+        elif value in ["undefined", "none", "null", '"undefined"', '"none"', '"null"', "this is an invalid field"]:
+            return "null"
+    return "null"
+
+# Function to ensure Terraform-compatible lists
+def format_list(value):
+    """Ensures a value is correctly formatted as a Terraform-compatible list."""
+    if isinstance(value, list):
+        return json.dumps(value)
+    elif isinstance(value, str):
+        value = value.strip()
+        if value.startswith("[") and value.endswith("]"):
+            return value  # Already a list format
+        elif value:
+            return json.dumps([value])  # Wrap single values in a list
+    return "[]"  # Default to an empty list
+
+# Function to ensure Terraform-compatible lists for users_excluded
+def format_users_excluded(value):
+    """Ensures users_excluded is always an empty array."""
+    return "[]"
 
 # Function to clean values for Terraform
 def clean_value(value, default=None):
-    if pd.isna(value) or value == "Not Available" or value == "None":
-        return default
+    """Ensure proper handling of null values for Terraform."""
+    if pd.isna(value) or value in ["Not Available", "None", "null"]:
+        return None
     return value.replace('\n', ' ') if isinstance(value, str) else value
 
 # Function to escape double quotes for Terraform resources
 def escape_for_terraform_resources(value):
     if value:
-        return value.replace('"', '\\"')  # Ensure single escaped quotes for Terraform resources
+        return value.replace('"', '\\"')
     return value
 
-# Function to fix logical operator replacements (but only standalone, avoid breaking valid expressions)
-def fix_logical_operators(value):
-    if not value:
-        return value
-    
-    # Preserve correctly formatted logical operators and avoid replacing already valid ones
-    value = re.sub(r'(?<!\|)\|(?!\|)', '||', value)  # Replace standalone | with ||
-    value = re.sub(r'(?<!&)\&(?!&)', '&&', value)  # Replace standalone & with &&
-    return value
+# Function to ensure Terraform-compatible lists for group_assignments
+def format_group_assignments(value):
+    """Ensures group_assignments is correctly formatted as a Terraform-compatible list."""
+    if isinstance(value, list):
+        return json.dumps(value)
+    elif isinstance(value, str):
+        value = value.strip()
+        if "," in value:
+            return json.dumps(value.split(","))
+        elif value:
+            return json.dumps([value])
+    return "[]"
 
-# Load data
+
+# Load group and rule data
 group_data = {env: load_csv(files[f"{env}_groups"]) for env in ["preview", "prod"]}
 group_rule_data = {env: load_csv(files[f"{env}_rules"]) for env in ["preview", "prod"]}
 
-# Environment mapping
-env_map = {"preview": "test", "prod": "prod"}
-
-# Process groups
-terraform_resources = []
-terraform_imports = []
-
-for env, df in group_data.items():
-    env_key = env_map[env]
+# Function to generate Terraform resource blocks
+def generate_terraform_resources(group_data, group_rule_data):
+    terraform_config = []
     
-    for _, row in df.iterrows():
-        group_id = row["id"]
-        group_name = clean_value(row["name"], default="Unknown Group")
-
-        terraform_resources.append(f"""
-resource "okta_group" "group_{env}_{group_id}" {{
-  count = var.CONFIG == "{env_map[env]}" ? 1 : 0
-  name        = "{escape_for_terraform_resources(group_name)}"
-  description = "{escape_for_terraform_resources(clean_value(row.get('description'), default='null'))}"
-  custom_profile_attributes = jsonencode({{
-    "admin_notes" = "{escape_for_terraform_resources(clean_value(row.get('adminNotes'), default='null'))}",
-    "groupDynamic" = {json.dumps(clean_value(row.get('groupDynamic'), default=False))},
-    "groupOwner" = "{escape_for_terraform_resources(clean_value(row.get('groupOwner'), default='null'))}"
-  }})
-
-  lifecycle {{
-    ignore_changes = [skip_users]
-  }}
-}}
-""")
-
-        terraform_imports.append(f"""
-import {{
-  for_each = var.CONFIG == "{env_map[env]}" ? toset(["{env_map[env]}"]) : []
-  to = okta_group.group_{env}_{group_id}[0]
-  id = "{group_id}"
-}}
-""")
-
-# Process group rules
-for env, df in group_rule_data.items():
+    for env, groups in group_data.items():
+        for _, group in groups.iterrows():
+            group_name = escape_for_terraform_resources(clean_value(group.get("name")))
+            group_id = clean_value(group.get("id"))
+            group_description = clean_value(group.get("description"))
+            admin_notes = clean_value(group.get("admin_notes"))
+            group_dynamic = process_group_dynamic(group.get("groupDynamic"))
+            group_owner = clean_value(group.get("groupOwner"))
+            
+            terraform_config.append(f'resource "okta_group" "group_{env}_{group_id}" {{')
+            terraform_config.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
+            terraform_config.append(f'  name        = "{group_name}"')
+            terraform_config.append(f'  description = {json.dumps(group_description) if group_description else "null"}')
+            terraform_config.append(f'  custom_profile_attributes = jsonencode({{')
+            terraform_config.append(f'    "adminNotes" = {json.dumps(admin_notes) if admin_notes else "null"},')
+            terraform_config.append(f'    "groupDynamic" = {group_dynamic},')
+            terraform_config.append(f'    "groupOwner" = {json.dumps(group_owner) if group_owner else "null"}')
+            terraform_config.append(f'  }})')
+            terraform_config.append(f'  lifecycle {{ ignore_changes = [skip_users] }}')
+            terraform_config.append("}")
+            terraform_config.append("")
     
-    for _, row in df.iterrows():
-        rule_id = row["id"]
-        rule_name = clean_value(row["name"], default="Unknown Rule")
-        group_assignments = row["groupIds"].split(",")
-        expression_value = fix_logical_operators(row["value"])
-        expression_value = escape_for_terraform_resources(expression_value)
-        expression_value = " ".join(expression_value.splitlines())  # Ensure it remains a single line
-        terraform_resources.append(f"""
-resource "okta_group_rule" "rule_{env}_{rule_id}" {{
-  count = var.CONFIG == "{env_map[env]}" ? 1 : 0
-  name   = "{escape_for_terraform_resources(rule_name)}"
-  group_assignments = {json.dumps(group_assignments)}
-  expression_type  = "urn:okta:expression:1.0"
-  expression_value = "{expression_value}"
-  users_excluded   = []
-}}
-""")
+    for env, rules in group_rule_data.items():
+        for _, rule in rules.iterrows():
+            rule_id = clean_value(rule.get("id"))
+            rule_name = escape_for_terraform_resources(clean_value(rule.get("name")))
+            group_assignments = format_group_assignments(clean_value(rule.get("groupIds", [])))
+            # users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
+            users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
 
-        terraform_imports.append(f"""
-import {{
-  for_each = var.CONFIG == "{env_map[env]}" ? toset(["{env_map[env]}"]) : []
-  to = okta_group_rule.rule_{env}_{rule_id}[0]
-  id = "{rule_id}"
-}}
-""")
+            expression_type = clean_value(rule.get("type", "urn:okta:expression:1.0"))
+            expression_value = escape_for_terraform_resources(clean_value(rule.get("value")))
+            
+            
+            terraform_config.append(f'resource "okta_group_rule" "rule_{env}_{rule_id}" {{')
+            terraform_config.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
+            terraform_config.append(f'  name   = "{rule_name}"')
+            terraform_config.append(f'  group_assignments = {group_assignments}')
+            terraform_config.append(f'  expression_type  = "{expression_type}"')
+            terraform_config.append(f'  expression_value = "{expression_value}"')
+            terraform_config.append(f'  users_excluded   = {users_excluded}')
+            terraform_config.append("}")
+            terraform_config.append("")
+    
+    return "\n".join(terraform_config)
 
-# Write Terraform output
-terraform_output = f"""
-{''.join(terraform_resources)}
+# Function to generate Terraform import blocks
+def generate_terraform_imports(group_data, group_rule_data):
+    import_blocks = []
+    for env, groups in group_data.items():
+        for _, group in groups.iterrows():
+            group_id = clean_value(group.get("id"))
+            import_blocks.append(f'import {{')
+            import_blocks.append(f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []')
+            import_blocks.append(f'  to = okta_group.group_{env}_{group_id}[0]')
+            import_blocks.append(f'  id = "{group_id}"')
+            import_blocks.append(f'}}')
+            import_blocks.append("")
+    
+    for env, rules in group_rule_data.items():
+        for _, rule in rules.iterrows():
+            rule_id = clean_value(rule.get("id"))
+            import_blocks.append(f'import {{')
+            import_blocks.append(f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []')
+            import_blocks.append(f'  to = okta_group_rule.rule_{env}_{rule_id}[0]')
+            import_blocks.append(f'  id = "{rule_id}"')
+            import_blocks.append(f'}}')
+            import_blocks.append("")
+    
+    return "\n".join(import_blocks)
 
-{''.join(terraform_imports)}
-"""
+# Generate Terraform configuration
+terraform_output = generate_terraform_resources(group_data, group_rule_data)
+import_output = generate_terraform_imports(group_data, group_rule_data)
 
-# Save to Terraform file
-output_file = os.path.join(script_dir, "groups-legacy-2024-v7.tf")
-with open(output_file, "w") as f:
+# Define file paths
+combined_file = os.path.join(script_dir, "groups-legacy-2024-v10.tf")
+resource_file = os.path.join(script_dir, "generated-terraform.tf")
+import_file = os.path.join(script_dir, "terraform-imports.tf")
+
+# Write Terraform resources to separate file
+with open(resource_file, "w") as f:
     f.write(terraform_output)
 
-print(f"Terraform file generated: {output_file}")
+# Write Terraform imports to separate file
+with open(import_file, "w") as f:
+    f.write(import_output)
+
+# Write a combined Terraform file (resources + imports)
+with open(combined_file, "w") as f:
+    f.write(terraform_output)
+    f.write("\n\n")  # Separate resources and imports
+    f.write(import_output)
+
+print(f"Terraform resource file generated: {resource_file}")
+print(f"Terraform import file generated: {import_file}")
+print(f"Combined Terraform file generated: {combined_file}")
