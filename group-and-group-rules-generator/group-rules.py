@@ -38,24 +38,10 @@ def fetch_okta_group_rules(okta_domain, api_token):
     
     return rules
 
-def process_and_export_group_rules(rules, output_csv="okta_group_rules.csv"):
-    """Process group rules dynamically and export them to CSV."""
+def process_and_export_rules(rules, output_csv="okta_group_rules.csv"):
+    """Process rule data dynamically and export it to CSV."""
     
-    headers = set(["id", "name", "status", "created", "lastUpdated", "allGroupsValid"])
-    for rule in rules:
-        conditions = rule.get("conditions", {})
-        actions = rule.get("actions", {}).get("assignUserToGroups", {})
-        embedded = rule.get("_embedded", {}).get("groupIdToGroupNameMap", {})
-        
-        # Add dynamic headers from nested JSON fields
-        if "people" in conditions:
-            headers.update(["excludedUsers", "excludedGroups"])
-        if "expression" in conditions:
-            headers.update(conditions["expression"].keys())
-        headers.update(actions.keys())
-        headers.update(embedded.keys())
-    
-    headers = sorted(headers)  # Sort headers for consistency
+    headers = set(["id", "name", "status", "created", "lastUpdated", "allGroupsValid", "excludedUsers", "excludedGroups"])
     
     with open(output_csv, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=headers)
@@ -63,32 +49,31 @@ def process_and_export_group_rules(rules, output_csv="okta_group_rules.csv"):
 
         for rule in rules:
             row = {
-                "id": rule.get("id", "Not Available"),
-                "name": rule.get("name", "Not Available"),
-                "status": rule.get("status", "Not Available"),
-                "created": rule.get("created", "Not Available"),
-                "lastUpdated": rule.get("lastUpdated", "Not Available"),
-                "allGroupsValid": "true" if rule.get("allGroupsValid", False) else "false"
+                "id": rule.get("id", None),
+                "name": rule.get("name", None),
+                "status": rule.get("status"),  # Keep status as returned by API
+                "created": rule.get("created", None),
+                "lastUpdated": rule.get("lastUpdated", None),
+                "allGroupsValid": rule.get("allGroupsValid", False)  # Keep as actual boolean
             }
             
             conditions = rule.get("conditions", {})
             actions = rule.get("actions", {}).get("assignUserToGroups", {})
             embedded = rule.get("_embedded", {}).get("groupIdToGroupNameMap", {})
             
-            if "people" in conditions:
-                row["excludedUsers"] = ",".join(conditions["people"].get("users", {}).get("exclude", [])) or "Not Available"
-                row["excludedGroups"] = ",".join(conditions["people"].get("groups", {}).get("exclude", [])) or "Not Available"
+            row["excludedUsers"] = conditions.get("people", {}).get("users", {}).get("exclude", [])
+            row["excludedGroups"] = ",".join(conditions.get("people", {}).get("groups", {}).get("exclude", [])) if conditions.get("people", {}).get("groups", {}).get("exclude") else None
             
             if "expression" in conditions:
                 for key in conditions["expression"]:
-                    row[key] = conditions["expression"].get(key, "Not Available")
+                    row[key] = conditions["expression"].get(key, None)
             
             for key in actions:
-                row[key] = ",".join(actions.get(key, [])) or "Not Available"
+                row[key] = ",".join(actions.get(key, [])) if actions.get(key, []) else None
             
             for key, value in embedded.items():
                 row[key] = value
-            
+
             writer.writerow(row)
     
     print(f"CSV file '{output_csv}' has been created successfully.")
@@ -110,7 +95,7 @@ def main():
     okta_domain = get_okta_domain(args.subdomain, args.domain)
     rules = fetch_okta_group_rules(okta_domain, api_token)
     if rules:
-        process_and_export_group_rules(rules, args.output)
+        process_and_export_rules(rules, args.output)
 
 if __name__ == "__main__":
     main()
