@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Define the hook file path to exclude
+HOOK_FILE=".git-hooks/pre-commit-api-key.sh"
+
 # Define patterns for common API keys (AWS, Google, Stripe, GitHub, Slack, Facebook, Mailchimp, Okta, Terraform, etc.)
 PATTERNS=(
     "AKIA[0-9A-Z]{16}"  # AWS Access Key ID
@@ -10,22 +13,27 @@ PATTERNS=(
     "EAACEdEose0cBA[0-9A-Za-z]+"  # Facebook Access Token
     "[0-9a-f]{32}-us[0-9]{1,2}"  # Mailchimp API Key
 
-    # Okta API Tokens
-    "00[0-9a-zA-Z]{38}"  # Okta API Key (starts with "00" followed by 38 alphanumeric characters)
+    # Okta API Tokens (Allowing letters, numbers, and underscores)
+    "00[a-zA-Z0-9_]{38}"  # Okta API Key (00xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)
 
     # Terraform Cloud/Enterprise API Tokens
-    "tfe.[0-9a-zA-Z]{35}"  # Terraform Cloud API Key (tfe.xxxxxx...)
+    "tfe\.[0-9a-zA-Z_]{35}"  # Terraform Cloud API Key (tfe.xxxxxx...)
 
     # Generic API Key formats (adjust based on your security needs)
-    "[A-Za-z0-9]{32}"  # Generic 32-character API keys
-    "[A-Za-z0-9]{40}"  # Generic 40-character API keys
-    "[A-Za-z0-9]{64}"  # Generic 64-character API keys
+    "[A-Za-z0-9_]{32}"  # Generic 32-character API keys
+    "[A-Za-z0-9_]{40}"  # Generic 40-character API keys
+    "[A-Za-z0-9_]{64}"  # Generic 64-character API keys
 )
 
 # Check staged files for API keys
 FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
 for FILE in $FILES; do
+    # Skip the hook file itself
+    if [[ "$FILE" == "$HOOK_FILE" ]]; then
+        continue
+    fi
+
     # Skip binary files
     if file "$FILE" | grep -qE 'binary'; then
         continue
