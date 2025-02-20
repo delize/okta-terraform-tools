@@ -9,17 +9,17 @@ alias deactivate 'test $?_OLD_VIRTUAL_PATH != 0 && setenv PATH "$_OLD_VIRTUAL_PA
 # Unset irrelevant variables.
 deactivate nondestructive
 
-setenv VIRTUAL_ENV /Users/andrew.doering/Documents/github/okta-group-grouprules-tf-work
+setenv VIRTUAL_ENV /Users/andrew.doering/Documents/github/okta-terraform-tools/group-and-group-rules-generator
 
 set _OLD_VIRTUAL_PATH="$PATH"
 setenv PATH "$VIRTUAL_ENV/"bin":$PATH"
-setenv VIRTUAL_ENV_PROMPT okta-group-grouprules-tf-work
+setenv VIRTUAL_ENV_PROMPT group-and-group-rules-generator
 
 
 set _OLD_VIRTUAL_PROMPT="$prompt"
 
 if (! "$?VIRTUAL_ENV_DISABLE_PROMPT") then
-    set prompt = "("okta-group-grouprules-tf-work") $prompt:q"
+    set prompt = "("group-and-group-rules-generator") $prompt:q"
 endif
 
 alias pydoc python -m pydoc

@@ -33,11 +33,11 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV /Users/andrew.doering/Documents/github/okta-group-grouprules-tf-work
+set -gx VIRTUAL_ENV /Users/andrew.doering/Documents/github/okta-terraform-tools/group-and-group-rules-generator
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/"bin $PATH
-set -gx VIRTUAL_ENV_PROMPT okta-group-grouprules-tf-work
+set -gx VIRTUAL_ENV_PROMPT group-and-group-rules-generator
 
 # Unset PYTHONHOME if set.
 if set -q PYTHONHOME
@@ -57,7 +57,7 @@ if test -z "$VIRTUAL_ENV_DISABLE_PROMPT"
         set -l old_status $status
 
         # Output the venv prompt; color taken from the blue of the Python logo.
-        printf "%s(%s)%s " (set_color 4B8BBE) okta-group-grouprules-tf-work (set_color normal)
+        printf "%s(%s)%s " (set_color 4B8BBE) group-and-group-rules-generator (set_color normal)
 
         # Restore the return status of the previous command.
         echo "exit $old_status" | .

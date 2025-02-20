@@ -1,4 +1,4 @@
-#!/Users/andrew.doering/Documents/github/okta-group-grouprules-tf-work/bin/python3.13
+#!/Users/andrew.doering/Documents/github/okta-terraform-tools/group-and-group-rules-generator/bin/python3.13
 # -*- coding: utf-8 -*-
 import re
 import sys
