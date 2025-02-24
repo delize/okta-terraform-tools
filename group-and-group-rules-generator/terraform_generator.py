@@ -100,8 +100,10 @@ def format_group_assignments(value):
             return json.dumps([value])
     return "[]"
 
+# Initialize the files dictionary by parsing command-line arguments.
+files = parse_arguments()
 
-# Load group and rule data
+# Load group and rule data using the files dictionary.
 group_data = {env: load_csv(files[f"{env}_groups"]) for env in ["preview", "prod"]}
 group_rule_data = {env: load_csv(files[f"{env}_rules"]) for env in ["preview", "prod"]}
 
@@ -114,7 +116,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             group_name = escape_for_terraform_resources(clean_value(group.get("name")))
             group_id = clean_value(group.get("id"))
             group_description = clean_value(group.get("description"))
-            admin_notes = clean_value(group.get("admin_notes"))
+            adminNotes = clean_value(group.get("adminNotes"))
             group_dynamic = process_group_dynamic(group.get("groupDynamic"))
             group_owner = clean_value(group.get("groupOwner"))
             
@@ -123,7 +125,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             terraform_config.append(f'  name        = "{group_name}"')
             terraform_config.append(f'  description = {json.dumps(group_description) if group_description else "null"}')
             terraform_config.append(f'  custom_profile_attributes = jsonencode({{')
-            terraform_config.append(f'    "adminNotes" = {json.dumps(admin_notes) if admin_notes else "null"},')
+            terraform_config.append(f'    "adminNotes" = {json.dumps(adminNotes) if adminNotes else "null"},')
             terraform_config.append(f'    "groupDynamic" = {group_dynamic},')
             terraform_config.append(f'    "groupOwner" = {json.dumps(group_owner) if group_owner else "null"}')
             terraform_config.append(f'  }})')
@@ -138,7 +140,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             group_assignments = format_group_assignments(clean_value(rule.get("groupIds", [])))
             # users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
             users_excluded = format_users_excluded(clean_value(rule.get("excludedUsers", [])))
-
+            status = rule.get("status", [])
             expression_type = clean_value(rule.get("type", "urn:okta:expression:1.0"))
             expression_value = escape_for_terraform_resources(clean_value(rule.get("value")))
             
@@ -146,6 +148,7 @@ def generate_terraform_resources(group_data, group_rule_data):
             terraform_config.append(f'resource "okta_group_rule" "rule_{env}_{rule_id}" {{')
             terraform_config.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
             terraform_config.append(f'  name   = "{rule_name}"')
+            terraform_config.append(f'  status   = "{status}"')
             terraform_config.append(f'  group_assignments = {group_assignments}')
             terraform_config.append(f'  expression_type  = "{expression_type}"')
             terraform_config.append(f'  expression_value = "{expression_value}"')
