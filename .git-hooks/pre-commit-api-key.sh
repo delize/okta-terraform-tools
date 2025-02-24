@@ -14,7 +14,7 @@ PATTERNS=(
     "[0-9a-f]{32}-us[0-9]{1,2}"  # Mailchimp API Key
 
     # Okta API Tokens (Allowing letters, numbers, underscores, and dashes)
-    "00[a-zA-Z0-9_-]{38}"  # Okta API Key (00xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxx)
+    "00[A-Za-z0-9_-]{40}"  # Okta API Key (00xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxx)
 
     # Terraform Cloud/Enterprise API Tokens
     "tfe\.[0-9a-zA-Z_-]{35}"  # Terraform Cloud API Key (tfe.xxxxxx-xxxxx)
