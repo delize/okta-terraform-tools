@@ -12,6 +12,18 @@ PATTERNS=(
     "xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}"  # Slack Token
     "EAACEdEose0cBA[0-9A-Za-z]+"  # Facebook Access Token
     "[0-9a-f]{32}-us[0-9]{1,2}"  # Mailchimp API Key
+    "AIza[0-9A-Za-z-_]{35}" #Firebase
+    "mongodb(\+srv)?:\/\/[a-zA-Z0-9:_-]+@[a-zA-Z0-9.-]+" # MongoDB
+    "postgres://[a-zA-Z0-9:_@%]+" #PostgresDB
+    "([?&]sig=([a-zA-Z0-9%]+))" # Azure Shared Key
+    "(eyJ[a-zA-Z0-9-_]+\.eyJ[a-zA-Z0-9-_]+\.?[a-zA-Z0-9-_]*)" #OAuth Tokens
+    "glpat-[0-9a-zA-Z_-]{20}" #Gitlab
+    "circleci_[0-9a-fA-F]{40}" #Circle CI TOkens
+    "ddp_[a-zA-Z0-9]{40}" #Datadog
+    "SK[0-9a-fA-F]{32}" #Twilio 
+    "SG\.[a-zA-Z0-9-_]{22}\.[a-zA-Z0-9-_]{43}" #Sendgrid
+    
+    
 
     # Okta API Tokens (Allowing letters, numbers, underscores, and dashes)
     "00[A-Za-z0-9_-]{40}"  # Okta API Key (00xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxx)
