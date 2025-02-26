@@ -129,7 +129,7 @@ def generate_tf(policy, rules, env_name=None):
             if not (rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule"):
                 tf_lines.append('  inactivity_period = ""')
                 tf_lines.append("  lifecycle {")
-                tf_lines.append('    ignore_changes = ["inactivity_period"]')
+                tf_lines.append('    ignore_changes = [inactivity_period]')
                 tf_lines.append("  }")
             
         if rule.get("status"):
@@ -155,8 +155,17 @@ def generate_tf(policy, rules, env_name=None):
 
         # Extract condition details safely.
         conditions = rule.get("conditions") or {}
-        if "network" in conditions and "connection" in conditions["network"]:
-            tf_lines.append(f'  network_connection = "{conditions["network"]["connection"]}"')
+        # if "network" in conditions and "connection" in conditions["network"]:
+        #     tf_lines.append(f'  network_connection = "{conditions["network"]["connection"]}"')
+        if "network" in conditions:
+            network = conditions["network"]
+            if "connection" in network:
+                tf_lines.append(f'  network_connection = "{network["connection"]}"')
+            if "exclude" in network:
+                tf_lines.append(f'  network_excludes = {json.dumps(network["exclude"])}')
+            if "include" in network:
+                tf_lines.append(f'  network_includes = {json.dumps(network["include"])}')
+
         if "device" in conditions:
             if "registered" in conditions["device"]:
                 tf_lines.append(f'  device_is_registered = {str(conditions["device"]["registered"]).lower()}')
@@ -221,11 +230,7 @@ def generate_tf(policy, rules, env_name=None):
         
         if "device_assurances_included" in rule:
             tf_lines.append(f'  device_assurances_included = {json.dumps(rule["device_assurances_included"])}')
-        if "network_excludes" in conditions:
-            tf_lines.append(f'  network_excludes = {json.dumps(conditions["network_excludes"])}')
-        if "network_includes" in conditions:
-            tf_lines.append(f'  network_includes = {json.dumps(conditions["network_includes"])}')
-
+     
 
         
 
@@ -233,23 +238,23 @@ def generate_tf(policy, rules, env_name=None):
         if rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule":
             tf_lines.append("  lifecycle {")
             tf_lines.append("    ignore_changes = [")
-            tf_lines.append('      "network_connection",')
-            tf_lines.append('      "network_excludes",')
-            tf_lines.append('      "network_includes",')
-            tf_lines.append('      "platform_include",')
-            tf_lines.append('      "custom_expression",')
-            tf_lines.append('      "inactivity_period",')
-            tf_lines.append('      "device_is_registered",')
-            tf_lines.append('      "device_is_managed",')
-            tf_lines.append('      "users_excluded",')
-            tf_lines.append('      "users_included",')
-            tf_lines.append('      "groups_excluded",')
-            tf_lines.append('      "groups_included",')
-            tf_lines.append('      "user_types_excluded",')
-            tf_lines.append('      "user_types_included",')
-            tf_lines.append('      "re_authentication_frequency",')
-            tf_lines.append('      "factor_mode",')
-            tf_lines.append('      "constraints",')
+            tf_lines.append('      network_connection,')
+            tf_lines.append('      network_excludes,')
+            tf_lines.append('      network_includes,')
+            tf_lines.append('      platform_include,')
+            tf_lines.append('      custom_expression,')
+            tf_lines.append('      inactivity_period,')
+            tf_lines.append('      device_is_registered,')
+            tf_lines.append('      device_is_managed,')
+            tf_lines.append('      users_excluded,')
+            tf_lines.append('      users_included,')
+            tf_lines.append('      groups_excluded,')
+            tf_lines.append('      groups_included,')
+            tf_lines.append('      user_types_excluded,')
+            tf_lines.append('      user_types_included,')
+            tf_lines.append('      re_authentication_frequency,')
+            tf_lines.append('      factor_mode,')
+            tf_lines.append('      constraints,')
             tf_lines.append("    ]")
             tf_lines.append("  }")
 
