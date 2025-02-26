@@ -72,8 +72,14 @@ def generate_tf(policy, rules, env_name=None):
     policy_name = sanitize_filename(policy.get("name", "unnamed_policy"))
     tf_lines = []
 
+    # Determine a unique policy name that includes the environment if provided.
+    if env_name:
+        unique_policy_name = f"{policy_name}_{env_name}"
+    else:
+        unique_policy_name = policy_name
+
     # Generate the policy resource block.
-    tf_lines.append(f'resource "okta_app_signon_policy" "policy_{policy_name}" {{')
+    tf_lines.append(f'resource "okta_app_signon_policy" "policy_{unique_policy_name}" {{')
     if env_name:
         tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
     tf_lines.append(f'  name = "{policy.get("name", "")}"')
@@ -87,7 +93,7 @@ def generate_tf(policy, rules, env_name=None):
     tf_lines.append("import {")
     if env_name:
         tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
-    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}[0]')
+    tf_lines.append(f'  to = okta_app_signon_policy.policy_{unique_policy_name}[0]')
     tf_lines.append(f'  id = "{policy.get("id")}"')
     tf_lines.append("}\n")
 
@@ -96,7 +102,10 @@ def generate_tf(policy, rules, env_name=None):
         rule_name_raw = rule.get("name", "unnamed_rule")
         rule_name = sanitize_filename(rule_name_raw)
         # Create a unique name by combining the policy and rule names.
-        unique_rule_name = f"{policy_name}_{rule_name}"
+        if env_name:
+            unique_rule_name = f"{policy_name}_{env_name}_{rule_name}"
+        else:
+            unique_rule_name = f"{policy_name}_{rule_name}"
         rule_id = rule.get("id", "")
         tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{unique_rule_name}" {{')
         if env_name:
