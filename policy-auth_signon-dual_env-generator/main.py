@@ -357,7 +357,13 @@ def main():
                 f.write(tf_content)
             print(f"Generated Terraform file: {filepath}")
 
+    # After generating files for each environment...
+    # Build a list of output directories (only for environments with a name)
     generated_dirs = [env["name"] for env in environments if env["name"]]
+    # If running in single-environment mode, you might want to use the current directory:
+    if not generated_dirs:
+        generated_dirs = ["."]
+        
     if args.fmt:
         run_terraform_fmt(generated_dirs)
 
