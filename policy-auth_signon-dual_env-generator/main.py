@@ -5,6 +5,17 @@ import os
 import re
 import sys
 import requests
+import subprocess
+import os
+
+def run_terraform_fmt(generated_dirs):
+    for folder in generated_dirs:
+        if os.path.isdir(folder):
+            try:
+                subprocess.run(["terraform", "fmt", folder], check=True)
+                print(f"Formatted files in {folder}")
+            except subprocess.CalledProcessError as e:
+                print(f"Error running terraform fmt in {folder}: {e}")
 
 def sanitize_filename(name):
     # Remove any characters that are not alphanumeric, underscore, or dash.
@@ -71,7 +82,7 @@ def generate_tf(policy, rules, env_name=None):
     tf_lines = []
 
     # Generate the policy resource block.
-    tf_lines.append(f'resource "okta_app_signon_policy" "policy_{policy_name}" {{')
+    tf_lines.append(f'resource "okta_app_signon_policy" "policy_{policy_name}_{env_name}" {{')
     if env_name:
         tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
     tf_lines.append(f'  name = "{policy.get("name", "")}"')
@@ -79,14 +90,14 @@ def generate_tf(policy, rules, env_name=None):
     if desc:
         tf_lines.append(f'  description = {json.dumps(desc)}')
     else:
-        tf_lines.append('  description = null')
+        tf_lines.append('  description = ""')
     tf_lines.append("}\n")
 
     # Generate the import block for the policy.
     tf_lines.append("import {")
     if env_name:
         tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
-    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}[0]')
+    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}_{env_name}[0]')
     tf_lines.append(f'  id = "{policy.get("id")}"')
     tf_lines.append("}\n")
 
@@ -95,13 +106,13 @@ def generate_tf(policy, rules, env_name=None):
         rule_name_raw = rule.get("name", "unnamed_rule")
         rule_name = sanitize_filename(rule_name_raw)
         # Create a unique name by combining the policy and rule names.
-        unique_rule_name = f"{policy_name}_{rule_name}"
+        unique_rule_name = f"{policy_name}_{rule_name}_{env_name}"
         rule_id = rule.get("id", "")
         tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{unique_rule_name}" {{')
         if env_name:
             tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
-        tf_lines.append(f'  policy_id = okta_app_signon_policy.policy_{policy_name}.id')
-        tf_lines.append(f'  depends_on = [okta_app_signon_policy.policy_{policy_name}]')
+        tf_lines.append(f'  policy_id = okta_app_signon_policy.policy_{policy_name}_{env_name}[0].id')
+        tf_lines.append(f'  depends_on = [okta_app_signon_policy.policy_{policy_name}_{env_name}[0]]')
         tf_lines.append(f'  name      = "{rule_name_raw}"')
 
         # Extract data from actions.
@@ -158,6 +169,50 @@ def generate_tf(policy, rules, env_name=None):
                     tf_lines.append(f'  user_types_excluded = {json.dumps(user_types_excluded)}')
         if "priority" in rule:
             tf_lines.append(f'  priority = {rule["priority"]}')
+        
+        # Process platform includes (as above)
+        # Process platform includes
+        platform_data = conditions.get("platform", {})
+        platform_includes = platform_data.get("include", [])
+        if platform_includes:
+            for plat in platform_includes:
+                tf_lines.append("  platform_include {")
+                # Get the OS type from the nested "os" dictionary.
+                if "os" in plat and "type" in plat["os"]:
+                    tf_lines.append(f'    os_type = "{plat["os"]["type"]}"')
+                # The platform's own type (e.g. DESKTOP, MOBILE)
+                if "type" in plat:
+                    tf_lines.append(f'    type = "{plat["type"]}"')
+                # If there's an os_expression key, handle it (if applicable)
+                if "os_expression" in plat:
+                    tf_lines.append(f'    os_expression = "{plat["os_expression"]}"')
+                tf_lines.append("  }")
+        if rule.get("custom_expression"):
+            tf_lines.append(f'  custom_expression = "{rule["custom_expression"]}"')
+        
+        if "device_assurances_included" in rule:
+            tf_lines.append(f'  device_assurances_included = {json.dumps(rule["device_assurances_included"])}')
+        if "network_excludes" in conditions:
+            tf_lines.append(f'  network_excludes = {json.dumps(conditions["network_excludes"])}')
+        if "network_includes" in conditions:
+            tf_lines.append(f'  network_includes = {json.dumps(conditions["network_includes"])}')
+        if rule.get("inactivity_period"):
+            tf_lines.append(f'  inactivity_period = "{rule["inactivity_period"]}"')
+        if rule.get("status"):
+            tf_lines.append(f'  status = "{rule["status"]}"')
+
+        if "people" in rule:
+            people = rule["people"]
+            if "groups" in people:
+                if "include" in people["groups"]:
+                    tf_lines.append(f'  groups_included = {json.dumps(people["groups"]["include"])}')
+                if "exclude" in people["groups"]:
+                    tf_lines.append(f'  groups_excluded = {json.dumps(people["groups"]["exclude"])}')
+            if "users" in people:
+                if "include" in people["users"]:
+                    tf_lines.append(f'  users_included = {json.dumps(people["users"]["include"])}')
+                if "exclude" in people["users"]:
+                    tf_lines.append(f'  users_excluded = {json.dumps(people["users"]["exclude"])}')
 
         # For catch-all rules, add a lifecycle block to ignore immutable changes.
         if rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule":
@@ -186,7 +241,7 @@ def generate_tf(policy, rules, env_name=None):
         if env_name:
             tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
         tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{unique_rule_name}[0]')
-        tf_lines.append(f'  id = "{rule_id}"')
+        tf_lines.append(f'  id = "{policy.get("id")}/{rule.get("id")}"')
         tf_lines.append("}\n")
 
     return "\n".join(tf_lines)
@@ -225,6 +280,8 @@ def main():
                         help="API token for the production environment. If not provided, will look for OKTA_PROD_API_TOKEN in the environment.")
     parser.add_argument("--test", action="store_true",
                         help="Run in test mode using local JSON files for policies and rules.")
+    parser.add_argument("--fmt",  action="store_true",
+                        help="Run 'terraform fmt' on the generated Terraform files after generation.")
     args = parser.parse_args()
 
     environments = []
@@ -299,6 +356,10 @@ def main():
             with open(filepath, 'w') as f:
                 f.write(tf_content)
             print(f"Generated Terraform file: {filepath}")
+
+    generated_dirs = ["prod", "test"]
+    if args.fmt:
+        run_terraform_fmt(generated_dirs)
 
 if __name__ == "__main__":
     main()
