@@ -123,12 +123,14 @@ def generate_tf(policy, rules, env_name=None):
         # otherwise, output null (without quotes)
         inactivity_period = verification.get("inactivityPeriod")
         if inactivity_period:
-            tf_lines.append(f'  inactivity_period = "{inactivity_period}"')
+            if not (rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule"):
+                tf_lines.append(f'  inactivity_period = "{inactivity_period}"')
         else:
-            tf_lines.append('  inactivity_period = ""')
-        tf_lines.append("  lifecycle {")
-        tf_lines.append('    ignore_changes = ["inactivity_period"]')
-        tf_lines.append("  }")
+            if not (rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule"):
+                tf_lines.append('  inactivity_period = ""')
+                tf_lines.append("  lifecycle {")
+                tf_lines.append('    ignore_changes = ["inactivity_period"]')
+                tf_lines.append("  }")
             
         if rule.get("status"):
             tf_lines.append(f'  status = "{rule["status"]}"')
@@ -236,6 +238,7 @@ def generate_tf(policy, rules, env_name=None):
             tf_lines.append('      "network_includes",')
             tf_lines.append('      "platform_include",')
             tf_lines.append('      "custom_expression",')
+            tf_lines.append('      "inactivity_period",')
             tf_lines.append('      "device_is_registered",')
             tf_lines.append('      "device_is_managed",')
             tf_lines.append('      "users_excluded",')
@@ -244,9 +247,12 @@ def generate_tf(policy, rules, env_name=None):
             tf_lines.append('      "groups_included",')
             tf_lines.append('      "user_types_excluded",')
             tf_lines.append('      "user_types_included",')
+            tf_lines.append('      "re_authentication_frequency",')
+            tf_lines.append('      "factor_mode",')
+            tf_lines.append('      "constraints",')
             tf_lines.append("    ]")
             tf_lines.append("  }")
-            
+
         tf_lines.append("}\n")
 
         # Generate the import block for the rule.
