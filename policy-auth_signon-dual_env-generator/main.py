@@ -179,7 +179,7 @@ def generate_tf(policy, rules, env_name=None):
             people = conditions["people"]
             for entity in ("groups", "users"):
                 if entity in people:
-                    for key in ("included", "exclude"):
+                    for key in ("included", "excluded"):
                         # Only add the attribute if it exists and is non-empty.
                         value = people[entity].get(key)
                         if value:
