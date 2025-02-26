@@ -119,6 +119,17 @@ def generate_tf(policy, rules, env_name=None):
         actions = rule.get("actions", {}).get("appSignOn", {})
         verification = actions.get("verificationMethod", {})
 
+        # Inactivity period: if the API returns a value, use it;
+        # otherwise, output null (without quotes)
+        inactivity_period = verification.get("inactivityPeriod")
+        if inactivity_period:
+            tf_lines.append(f'  inactivity_period = "{inactivity_period}"')
+        else:
+            tf_lines.append("  inactivity_period = null")
+            
+        if rule.get("status"):
+            tf_lines.append(f'  status = "{rule["status"]}"')
+
         if "access" in actions:
             tf_lines.append(f'  access = "{actions["access"]}"')
         if "factorMode" in verification:
@@ -148,16 +159,31 @@ def generate_tf(policy, rules, env_name=None):
                 tf_lines.append(f'  device_is_managed = {str(conditions["device"]["managed"]).lower()}')
         if "riskScore" in conditions and "level" in conditions["riskScore"]:
             tf_lines.append(f'  risk_score = "{conditions["riskScore"]["level"]}"')
+        # if "people" in conditions:
+        #     people = conditions["people"]
+        #     if "groups" in people and "include" in people["groups"]:
+        #         groups_included = people["groups"]["include"]
+        #         if groups_included:
+        #             tf_lines.append(f'  groups_included = {json.dumps(groups_included)}')
+        #         groups_excluded = people["groups"]["exclude"]
+        #         if groups_excluded:
+        #             tf_lines.append(f'  groups_excluded = {json.dumps(groups_excluded)}')
+        #     if "users" in people and "exclude" in people["users"]:
+        #         users_included = people["users"]["include"]
+        #         if users_included:
+        #             tf_lines.append(f'  users_included = {json.dumps(users_included)}')
+        #         users_excluded = people["users"]["exclude"]
+        #         if users_excluded:
+        #             tf_lines.append(f'  users_excluded = {json.dumps(users_excluded)}')
         if "people" in conditions:
             people = conditions["people"]
-            if "groups" in people and "include" in people["groups"]:
-                groups_included = people["groups"]["include"]
-                if groups_included:
-                    tf_lines.append(f'  groups_included = {json.dumps(groups_included)}')
-            if "users" in people and "exclude" in people["users"]:
-                users_excluded = people["users"]["exclude"]
-                if users_excluded:
-                    tf_lines.append(f'  users_excluded = {json.dumps(users_excluded)}')
+            for entity in ("groups", "users"):
+                if entity in people:
+                    for key in ("included", "exclude"):
+                        # Only add the attribute if it exists and is non-empty.
+                        value = people[entity].get(key)
+                        if value:
+                            tf_lines.append(f'  {entity}_{key} = {json.dumps(value)}')
         if "userType" in conditions and isinstance(conditions["userType"], dict):
             if "include" in conditions["userType"]:
                 user_types_included = conditions["userType"]["include"]
@@ -196,23 +222,9 @@ def generate_tf(policy, rules, env_name=None):
             tf_lines.append(f'  network_excludes = {json.dumps(conditions["network_excludes"])}')
         if "network_includes" in conditions:
             tf_lines.append(f'  network_includes = {json.dumps(conditions["network_includes"])}')
-        if rule.get("inactivity_period"):
-            tf_lines.append(f'  inactivity_period = "{rule["inactivity_period"]}"')
-        if rule.get("status"):
-            tf_lines.append(f'  status = "{rule["status"]}"')
 
-        if "people" in rule:
-            people = rule["people"]
-            if "groups" in people:
-                if "include" in people["groups"]:
-                    tf_lines.append(f'  groups_included = {json.dumps(people["groups"]["include"])}')
-                if "exclude" in people["groups"]:
-                    tf_lines.append(f'  groups_excluded = {json.dumps(people["groups"]["exclude"])}')
-            if "users" in people:
-                if "include" in people["users"]:
-                    tf_lines.append(f'  users_included = {json.dumps(people["users"]["include"])}')
-                if "exclude" in people["users"]:
-                    tf_lines.append(f'  users_excluded = {json.dumps(people["users"]["exclude"])}')
+
+        
 
         # For catch-all rules, add a lifecycle block to ignore immutable changes.
         if rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule":
