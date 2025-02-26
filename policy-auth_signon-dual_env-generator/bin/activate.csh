@@ -9,17 +9,17 @@ alias deactivate 'test $?_OLD_VIRTUAL_PATH != 0 && setenv PATH "$_OLD_VIRTUAL_PA
 # Unset irrelevant variables.
 deactivate nondestructive
 
-setenv VIRTUAL_ENV /Users/andrewdoering/Documents/github/okta-terraform-tools/policy-auth-generator
+setenv VIRTUAL_ENV /Users/andrew.doering/Documents/github/okta-terraform-tools/policy-auth_signon-dual_env-generator
 
 set _OLD_VIRTUAL_PATH="$PATH"
 setenv PATH "$VIRTUAL_ENV/"bin":$PATH"
-setenv VIRTUAL_ENV_PROMPT policy-auth-generator
+setenv VIRTUAL_ENV_PROMPT policy-auth_signon-dual_env-generator
 
 
 set _OLD_VIRTUAL_PROMPT="$prompt"
 
 if (! "$?VIRTUAL_ENV_DISABLE_PROMPT") then
-    set prompt = "("policy-auth-generator") $prompt:q"
+    set prompt = "("policy-auth_signon-dual_env-generator") $prompt:q"
 endif
 
 alias pydoc python -m pydoc

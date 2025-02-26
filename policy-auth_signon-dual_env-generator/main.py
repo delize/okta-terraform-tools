@@ -76,14 +76,14 @@ def generate_tf(policy, rules, env_name=None):
         tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
     tf_lines.append(f'  name = "{policy.get("name", "")}"')
     if policy.get("description"):
-        tf_lines.append(f'  description = "{policy.get("description", "")}"')
+        tf_lines.append(f'  description = {json.dumps(policy.get("description", "").replace("\n", " "))}')
     tf_lines.append("}\n")
 
     # Generate the import block for the policy.
     tf_lines.append("import {")
     if env_name:
         tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
-    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}')
+    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}[0]')
     tf_lines.append(f'  id = "{policy.get("id")}"')
     tf_lines.append("}\n")
 
@@ -179,7 +179,7 @@ def generate_tf(policy, rules, env_name=None):
         tf_lines.append("import {")
         if env_name:
             tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
-        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{rule_name}')
+        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{rule_name}[0]')
         tf_lines.append(f'  id = "{rule_id}"')
         tf_lines.append("}\n")
 
@@ -288,7 +288,7 @@ def main():
                 print(f"Error retrieving rules for policy {policy.get('name')}: {e}")
                 continue
             tf_content = generate_tf(policy, rules, env_name=env["name"])
-            filename = f"policy-{sanitize_filename(policy.get('name','unnamed_policy'))}{env_suffix}.tf"
+            filename = f"zz_legacy_policy-{sanitize_filename(policy.get('name','unnamed_policy'))}{env_suffix}.tf"
             filepath = os.path.join(output_dir, filename) if env["name"] else filename
             with open(filepath, 'w') as f:
                 f.write(tf_content)

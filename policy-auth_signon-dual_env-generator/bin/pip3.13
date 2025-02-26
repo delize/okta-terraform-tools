@@ -1,4 +1,4 @@
-#!/Users/andrewdoering/Documents/github/okta-terraform-tools/policy-auth-generator/bin/python3.13
+#!/Users/andrew.doering/Documents/github/okta-terraform-tools/policy-auth_signon-dual_env-generator/bin/python3.13
 # -*- coding: utf-8 -*-
 import re
 import sys
