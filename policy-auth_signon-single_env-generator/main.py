@@ -57,37 +57,55 @@ def get_policy_rules(base_url, policy_id, api_token, test=False):
         rules = response.json()
     return rules
 
-def generate_tf(policy, rules):
+def generate_tf(policy, rules, env_name=None):
     """
     Generates Terraform configuration for a given policy and its rules,
-    including an HCL import block for each resource.
+    including resource definitions and HCL import blocks.
+    
+    If env_name is provided (e.g. "prod" or "test"), then:
+      - Each resource block will include:
+            count = var.CONFIG == "{env_name}" ? 1 : 0
+      - Each import block will include:
+            for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []
     """
+    # Sanitize the policy name
     policy_name = sanitize_filename(policy.get("name", "unnamed_policy"))
     tf_lines = []
 
-    # Generate the okta_app_signon_policy resource block.
+    # Generate the policy resource block.
     tf_lines.append(f'resource "okta_app_signon_policy" "policy_{policy_name}" {{')
+    if env_name:
+        tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
     tf_lines.append(f'  name = "{policy.get("name", "")}"')
     if policy.get("description"):
-        tf_lines.append(f'  description = "{policy.get("description", "")}"')
+        tf_lines.append(f'  description = {json.dumps(policy.get("description", "").replace("\n", " "))}')
+    else:
+        tf_lines.append('  description = null')
     tf_lines.append("}\n")
 
     # Generate the import block for the policy.
     tf_lines.append("import {")
-    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}')
+    if env_name:
+        tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
+    tf_lines.append(f'  to = okta_app_signon_policy.policy_{policy_name}[0]')
     tf_lines.append(f'  id = "{policy.get("id")}"')
     tf_lines.append("}\n")
 
-    # Generate okta_app_signon_policy_rule blocks for each rule.
+    # Generate resource blocks for each rule.
     for rule in rules:
-        rule_name = sanitize_filename(rule.get("name", "unnamed_rule"))
+        rule_name_raw = rule.get("name", "unnamed_rule")
+        rule_name = sanitize_filename(rule_name_raw)
+        # Create a unique name by combining the policy and rule names.
+        unique_rule_name = f"{policy_name}_{rule_name}"
         rule_id = rule.get("id", "")
-        tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{rule_name}" {{')
+        tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{unique_rule_name}" {{')
+        if env_name:
+            tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
         tf_lines.append(f'  policy_id = okta_app_signon_policy.policy_{policy_name}.id')
         tf_lines.append(f'  depends_on = [okta_app_signon_policy.policy_{policy_name}]')
-        tf_lines.append(f'  name      = "{rule.get("name", "")}"')
+        tf_lines.append(f'  name      = "{rule_name_raw}"')
 
-        # Extract data from actions (if present)
+        # Extract data from actions.
         actions = rule.get("actions", {}).get("appSignOn", {})
         verification = actions.get("verificationMethod", {})
 
@@ -105,12 +123,11 @@ def generate_tf(policy, rules):
         if constraints:
             tf_lines.append("  constraints = [")
             for c in constraints:
-                # Convert constraint dict to a compact JSON string.
                 constraint_str = json.dumps(c, separators=(',', ':'))
                 tf_lines.append(f'    jsonencode({constraint_str}),')
             tf_lines.append("  ]")
 
-        # Safely extract condition details (defaulting to an empty dict if None).
+        # Extract condition details safely.
         conditions = rule.get("conditions") or {}
         if "network" in conditions and "connection" in conditions["network"]:
             tf_lines.append(f'  network_connection = "{conditions["network"]["connection"]}"')
@@ -143,7 +160,7 @@ def generate_tf(policy, rules):
         if "priority" in rule:
             tf_lines.append(f'  priority = {rule["priority"]}')
 
-        # For catch-all rules, add a lifecycle block to ignore changes on immutable fields.
+        # For catch-all rules, add a lifecycle block to ignore immutable changes.
         if rule.get("priority") == 99 or rule.get("name", "").strip().lower() == "catch-all rule":
             tf_lines.append("  lifecycle {")
             tf_lines.append("    ignore_changes = [")
@@ -167,7 +184,9 @@ def generate_tf(policy, rules):
 
         # Generate the import block for the rule.
         tf_lines.append("import {")
-        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{rule_name}')
+        if env_name:
+            tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
+        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{unique_rule_name}[0]')
         tf_lines.append(f'  id = "{rule_id}"')
         tf_lines.append("}\n")
 

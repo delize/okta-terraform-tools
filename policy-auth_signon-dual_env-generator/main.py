@@ -75,8 +75,11 @@ def generate_tf(policy, rules, env_name=None):
     if env_name:
         tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
     tf_lines.append(f'  name = "{policy.get("name", "")}"')
-    if policy.get("description"):
-        tf_lines.append(f'  description = {json.dumps(policy.get("description", "").replace("\n", " "))}')
+    desc = policy.get("description", "").replace("\n", " ").strip()
+    if desc:
+        tf_lines.append(f'  description = {json.dumps(desc)}')
+    else:
+        tf_lines.append('  description = null')
     tf_lines.append("}\n")
 
     # Generate the import block for the policy.
@@ -89,14 +92,17 @@ def generate_tf(policy, rules, env_name=None):
 
     # Generate resource blocks for each rule.
     for rule in rules:
-        rule_name = sanitize_filename(rule.get("name", "unnamed_rule"))
+        rule_name_raw = rule.get("name", "unnamed_rule")
+        rule_name = sanitize_filename(rule_name_raw)
+        # Create a unique name by combining the policy and rule names.
+        unique_rule_name = f"{policy_name}_{rule_name}"
         rule_id = rule.get("id", "")
-        tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{rule_name}" {{')
+        tf_lines.append(f'resource "okta_app_signon_policy_rule" "rule_{unique_rule_name}" {{')
         if env_name:
             tf_lines.append(f'  count = var.CONFIG == "{env_name}" ? 1 : 0')
         tf_lines.append(f'  policy_id = okta_app_signon_policy.policy_{policy_name}.id')
         tf_lines.append(f'  depends_on = [okta_app_signon_policy.policy_{policy_name}]')
-        tf_lines.append(f'  name      = "{rule.get("name", "")}"')
+        tf_lines.append(f'  name      = "{rule_name_raw}"')
 
         # Extract data from actions.
         actions = rule.get("actions", {}).get("appSignOn", {})
@@ -179,7 +185,7 @@ def generate_tf(policy, rules, env_name=None):
         tf_lines.append("import {")
         if env_name:
             tf_lines.append(f'  for_each = var.CONFIG == "{env_name}" ? toset(["{env_name}"]) : []')
-        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{rule_name}[0]')
+        tf_lines.append(f'  to = okta_app_signon_policy_rule.rule_{unique_rule_name}[0]')
         tf_lines.append(f'  id = "{rule_id}"')
         tf_lines.append("}\n")
 
