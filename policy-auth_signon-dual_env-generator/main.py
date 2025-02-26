@@ -125,7 +125,10 @@ def generate_tf(policy, rules, env_name=None):
         if inactivity_period:
             tf_lines.append(f'  inactivity_period = "{inactivity_period}"')
         else:
-            tf_lines.append("  inactivity_period = null")
+            tf_lines.append('  inactivity_period = ""')
+        tf_lines.append("  lifecycle {")
+        tf_lines.append('    ignore_changes = ["inactivity_period"]')
+        tf_lines.append("  }")
             
         if rule.get("status"):
             tf_lines.append(f'  status = "{rule["status"]}"')
@@ -159,31 +162,29 @@ def generate_tf(policy, rules, env_name=None):
                 tf_lines.append(f'  device_is_managed = {str(conditions["device"]["managed"]).lower()}')
         if "riskScore" in conditions and "level" in conditions["riskScore"]:
             tf_lines.append(f'  risk_score = "{conditions["riskScore"]["level"]}"')
-        # if "people" in conditions:
-        #     people = conditions["people"]
-        #     if "groups" in people and "include" in people["groups"]:
-        #         groups_included = people["groups"]["include"]
-        #         if groups_included:
-        #             tf_lines.append(f'  groups_included = {json.dumps(groups_included)}')
-        #         groups_excluded = people["groups"]["exclude"]
-        #         if groups_excluded:
-        #             tf_lines.append(f'  groups_excluded = {json.dumps(groups_excluded)}')
-        #     if "users" in people and "exclude" in people["users"]:
-        #         users_included = people["users"]["include"]
-        #         if users_included:
-        #             tf_lines.append(f'  users_included = {json.dumps(users_included)}')
-        #         users_excluded = people["users"]["exclude"]
-        #         if users_excluded:
-        #             tf_lines.append(f'  users_excluded = {json.dumps(users_excluded)}')
         if "people" in conditions:
             people = conditions["people"]
-            for entity in ("groups", "users"):
-                if entity in people:
-                    for key in ("included", "excluded"):
-                        # Only add the attribute if it exists and is non-empty.
-                        value = people[entity].get(key)
-                        if value:
-                            tf_lines.append(f'  {entity}_{key} = {json.dumps(value)}')
+            if "groups" in people:
+                groups = people["groups"]
+                if "include" in groups:
+                    groups_included = groups["include"]
+                    if groups_included:
+                        tf_lines.append(f'  groups_included = {json.dumps(groups_included)}')
+                if "exclude" in groups:
+                    groups_excluded = groups["exclude"]
+                    if groups_excluded:
+                        tf_lines.append(f'  groups_excluded = {json.dumps(groups_excluded)}')
+            if "users" in people:
+                users = people["users"]
+                if "include" in users:
+                    users_included = users["include"]
+                    if users_included:
+                        tf_lines.append(f'  users_included = {json.dumps(users_included)}')
+                if "exclude" in users:
+                    users_excluded = users["exclude"]
+                    if users_excluded:
+                        tf_lines.append(f'  users_excluded = {json.dumps(users_excluded)}')
+ 
         if "userType" in conditions and isinstance(conditions["userType"], dict):
             if "include" in conditions["userType"]:
                 user_types_included = conditions["userType"]["include"]
