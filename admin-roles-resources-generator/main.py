@@ -1,422 +1,236 @@
 #!/usr/bin/env python3
-import sys
-import requests
 import argparse
+import requests
+import json
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Generate Terraform HCL code for Okta Resource Sets and Admin Roles using both new and legacy endpoints."
-    )
-    parser.add_argument(
-        "--subdomain",
-        help="Your Okta subdomain (e.g. mycompany). If provided (with --domain-flag), the script builds the Okta URL."
-    )
-    parser.add_argument(
-        "--domain-flag",
-        default="default",
-        help="One of: default, emea, preview, gov, mil, fedramp, etc. (default is 'default' -> okta.com)."
-    )
-    parser.add_argument(
-        "--org-url",
-        help="Full Okta Org URL, e.g. https://mycompany.okta.com. If provided, this is used instead of subdomain/domain-flag."
-    )
-    parser.add_argument(
-        "--api-token",
-        required=True,
-        help="Your Okta API Token (SSWS token)."
-    )
-    parser.add_argument(
-        "--output-file",
-        help="Path to a file where the Terraform code should be written. If omitted, prints to stdout."
-    )
-    return parser.parse_args()
-
-def get_okta_domain(subdomain, domain_flag=None):
+def get_okta_domain(subdomain, domain_flag):
+    """
+    Build the Okta domain URL using a subdomain and domain_flag.
+    domain_flag can be 'default', 'emea', 'preview', 'gov', or 'mil'.
+    """
     domain_map = {
         "default": "okta.com",
         "emea": "okta-emea.com",
         "preview": "oktapreview.com",
         "gov": "okta-gov.com",
-        "mil": "okta.mil",
-        "fedramp": "oktafed.com",
+        "mil": "okta.mil"
     }
-    if not domain_flag:
-        domain_flag = "default"
-    okta_domain = domain_map.get(domain_flag.lower(), "okta.com")
-    return f"https://{subdomain}.{okta_domain}"
+    domain = domain_map.get(domain_flag, "okta.com")
+    return f"{subdomain}.{domain}"
 
-def get_headers(api_token):
-    return {
-        "Authorization": f"SSWS {api_token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
+def get_api_data(url, headers):
+    """Helper function to query an Okta API endpoint."""
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error: {response.status_code} when querying {url}")
+        return None
 
-# --------------------------
-# New IAM Endpoints
-# --------------------------
+def fetch_roles(okta_domain, headers):
+    """Fetch all roles from Okta, handling pagination if necessary."""
+    roles = []
+    endpoint = f"https://{okta_domain}/api/v1/iam/roles"
+    
+    while endpoint:
+        print(f"Fetching roles from: {endpoint}")
+        data = get_api_data(endpoint, headers)
+        if not data:
+            break
+        roles.extend(data.get("roles", []))
+        next_link = data.get("_links", {}).get("next", {}).get("href")
+        endpoint = next_link if next_link else None
+    return roles
 
-def get_resource_sets_new(org_url, headers):
+def fetch_role_permissions(okta_domain, role_id, headers):
     """
-    GET /api/v1/iam/resource-sets returns a JSON object with key "resource-sets".
+    Fetch the permissions for a given role using its permissions endpoint.
+    Returns a list of permission labels.
     """
-    return paginated_get(
-        start_url=f"{org_url}/api/v1/iam/resource-sets",
-        headers=headers,
-        list_key="resource-sets"
-    )
+    permissions_endpoint = f"https://{okta_domain}/api/v1/iam/roles/{role_id}/permissions"
+    print(f"Fetching permissions from: {permissions_endpoint}")
+    data = get_api_data(permissions_endpoint, headers)
+    if data and "permissions" in data:
+        perms = [perm.get("label") for perm in data["permissions"] if perm.get("label")]
+        return perms
+    return []
 
-def get_roles_new(org_url, headers):
-    """
-    GET /api/v1/iam/roles returns a JSON object with key "roles".
-    """
-    return paginated_get(
-        start_url=f"{org_url}/api/v1/iam/roles",
-        headers=headers,
-        list_key="roles"
-    )
+def fetch_resource_sets(okta_domain, headers):
+    """Fetch all resource sets from Okta, handling pagination if necessary."""
+    resource_sets = []
+    endpoint = f"https://{okta_domain}/api/v1/iam/resource-sets"
+    
+    while endpoint:
+        print(f"Fetching resource sets from: {endpoint}")
+        data = get_api_data(endpoint, headers)
+        if not data:
+            break
+        resource_sets.extend(data.get("resource-sets", []))
+        next_link = data.get("_links", {}).get("next", {}).get("href")
+        endpoint = next_link if next_link else None
+    return resource_sets
 
-def get_role_assignments_new(org_url, headers, role_id):
-    """
-    GET /api/v1/iam/roles/{roleId}/assignments.
-    Raises HTTPError if the endpoint returns 404/405.
-    """
-    url = f"{org_url}/api/v1/iam/roles/{role_id}/assignments"
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
-    return {
-        "users": data.get("userAssignments", []),
-        "groups": data.get("groupAssignments", [])
-    }
+# def fetch_resource_set_resources(okta_domain, resource_set_id, headers):
+#     """
+#     Fetch resources for a given resource set.
+#     Returns a list of endpoints derived from the resource's self link.
+#     Outputs debug information when expected keys are missing.
+#     """
+#     endpoint = f"https://{okta_domain}/api/v1/iam/resource-sets/{resource_set_id}/resources"
+#     print(f"Fetching resource set resources from: {endpoint}")
+#     data = get_api_data(endpoint, headers)
+#     resources = []
+#     if data and "resources" in data:
+#         for res in data["resources"]:
+#             # Check for the _links object.
+#             links = res.get("_links")
+#             if not links:
+#                 print(f"DEBUG: Resource {res.get('id')} missing '_links'. Full resource: {json.dumps(res, indent=2)}")
+#                 continue
+#             # Check for the self link.
+#             self_link_obj = links.get("self")
+#             if not self_link_obj:
+#                 print(f"DEBUG: Resource {res.get('id')} missing 'self' link. Full _links: {json.dumps(links, indent=2)}")
+#                 continue
+#             href = self_link_obj.get("href")
+#             if href:
+#                 resources.append(href)
+#             else:
+#                 print(f"DEBUG: Resource {res.get('id')} has a 'self' link but no 'href'. Full self object: {json.dumps(self_link_obj, indent=2)}")
+#     else:
+#         print(f"DEBUG: No 'resources' key in response for resource set {resource_set_id}. Full response: {json.dumps(data, indent=2)}")
+#     return resources
 
-def get_resource_set_resources(org_url, headers, resource_set_id):
+def fetch_resource_set_resources(okta_domain, resource_set_id, headers):
     """
-    GET /api/v1/iam/resource-sets/{resource_set_id}/resources.
-    Returns a list of resource objects (each should include an "orn" field).
+    Fetch resources for a given resource set.
+    Returns a list of endpoints derived from the resource's self link.
+    Outputs enhanced debug information when expected keys are missing.
     """
-    url = f"{org_url}/api/v1/iam/resource-sets/{resource_set_id}/resources"
-    return paginated_get(url, headers, list_key="resources")
-
-def get_role_permissions(org_url, headers, role_id):
-    """
-    GET /api/v1/iam/roles/{roleId}/permissions returns an object with key "permissions".
-    Extracts and returns a list of permission labels.
-    """
-    url = f"{org_url}/api/v1/iam/roles/{role_id}/permissions"
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
-    perms = data.get("permissions", [])
-    labels = [perm.get("label") for perm in perms if perm.get("label")]
-    return labels
-
-# --------------------------
-# Legacy Endpoints
-# --------------------------
-
-def get_roles_legacy(org_url, headers):
-    """
-    GET /api/v1/roles returns a list directly.
-    """
-    return paginated_get(
-        start_url=f"{org_url}/api/v1/roles",
-        headers=headers,
-        list_key=None
-    )
-
-def get_role_targets_users_legacy(org_url, headers, role_id):
-    url = f"{org_url}/api/v1/roles/{role_id}/targets/users"
-    resp = requests.get(url, headers=headers)
-    if resp.status_code == 404:
-        return []
-    resp.raise_for_status()
-    return resp.json()
-
-def get_role_targets_groups_legacy(org_url, headers, role_id):
-    url = f"{org_url}/api/v1/roles/{role_id}/targets/groups"
-    resp = requests.get(url, headers=headers)
-    if resp.status_code == 404:
-        return []
-    resp.raise_for_status()
-    return resp.json()
-
-# --------------------------
-# Pagination Helper
-# --------------------------
-
-def paginated_get(start_url, headers, list_key=None):
-    results = []
-    url = start_url
-    while url:
-        resp = requests.get(url, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        if list_key:
-            items = data.get(list_key, [])
-        else:
-            if isinstance(data, list):
-                items = data
+    endpoint = f"https://{okta_domain}/api/v1/iam/resource-sets/{resource_set_id}/resources"
+    print(f"Fetching resource set resources from: {endpoint}")
+    data = get_api_data(endpoint, headers)
+    resources = []
+    if data and "resources" in data:
+        for res in data["resources"]:
+            # Check for the _links object.
+            links = res.get("_links")
+            if not links:
+                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) missing '_links'. Full resource: {json.dumps(res, indent=2)}")
+                continue
+            # Check for the self link.
+            self_link_obj = links.get("self")
+            if not self_link_obj:
+                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) missing 'self' link. Full _links: {json.dumps(links, indent=2)}")
+                continue
+            href = self_link_obj.get("href")
+            if href:
+                resources.append(href)
             else:
-                items = data.get("resourceSets", data.get("roles", []))
-        results.extend(items)
-        next_link = None
-        if "Link" in resp.headers:
-            links = resp.headers["Link"].split(",")
-            for link in links:
-                if 'rel="next"' in link:
-                    next_link = link[link.find("<")+1:link.find(">")]
-        url = next_link
-    return results
+                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) has a 'self' link but no 'href'. Full self object: {json.dumps(self_link_obj, indent=2)}")
+    else:
+        print(f"DEBUG: No 'resources' key in response for resource set {resource_set_id}. Full response: {json.dumps(data, indent=2)}")
+    return resources
 
-# --------------------------
-# Helpers for Import Blocks
-# --------------------------
+def generate_terraform_roles(roles, tf_file, terraform_format, okta_domain, headers):
+    """Generate Terraform blocks for Okta custom roles, including permissions."""
+    with open(tf_file, "a") as f:
+        f.write("# Terraform configuration for Okta Custom Admin Roles\n\n")
+        for role in roles:
+            role_id = role.get("id")
+            label = role.get("label")
+            description = role.get("description", "")
+            permissions = fetch_role_permissions(okta_domain, role_id, headers)
+            
+            if terraform_format == "hcl":
+                perms_formatted = ", ".join([f'"{perm}"' for perm in permissions])
+                terraform_block = f'''
+resource "okta_admin_role_custom" "role_{role_id}" {{
+  label       = "{label}"
+  description = "{description}"
+  permissions = [{perms_formatted}]
+}}
 
-def generate_import_block(resource_type, resource_name, id_value):
-    """
-    Generate an HCL import block for a given resource.
-    Example output:
-    
-    import "okta_resource_set" "my_resource" {
-      for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
-      to       = okta_resource_set.my_resource[0]
-      id       = "resource_id_value"
-    }
-    """
-    block = f'''import "{resource_type}" "{resource_name}" {{
-  for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
-  to       = {resource_type}.{resource_name}[0]
-  id       = "{id_value}"
-}}'''
-    return block
+'''
+            else:
+                terraform_block = json.dumps({
+                    "resource": {
+                        "okta_admin_role_custom": {
+                            f"role_{role_id}": {
+                                "label": label,
+                                "description": description,
+                                "permissions": permissions
+                            }
+                        }
+                    }
+                }, indent=2) + "\n"
+            f.write(terraform_block)
 
-# --------------------------
-# Terraform Code Generation
-# --------------------------
-
-def generate_tf_code(org_url, headers, resource_sets, new_roles, legacy_roles, roles_dict):
-    tf_lines = []
-    tf_lines.append("############################################")
-    tf_lines.append("# IMPORT BLOCKS")
-    tf_lines.append("############################################")
-    
-    # Resource Sets Import Blocks (including ORNs not in import but used in resource blocks)
-    if resource_sets:
-        tf_lines.append("\n# Resource Sets Imports")
+def generate_terraform_resource_sets(resource_sets, tf_file, terraform_format, okta_domain, headers):
+    """Generate Terraform blocks for Okta Resource Sets including their resources."""
+    with open(tf_file, "a") as f:
+        f.write("# Terraform configuration for Okta Resource Sets\n\n")
         for rs in resource_sets:
             rs_id = rs.get("id")
-            rs_label = rs.get("label") or f"resource_set_{rs_id}"
-            rs_name = rs_label.lower().replace(" ", "_")
-            import_block = generate_import_block("okta_resource_set", rs_name, rs_id)
-            tf_lines.append(import_block)
-    
-    # Admin Roles Import Blocks
-    tf_lines.append("\n# Admin Roles Imports")
-    for rid, info in roles_dict.items():
-        role_obj = info["role"]
-        role_label = role_obj.get("label") or role_obj.get("name") or f"role_{rid}"
-        role_name = role_label.lower().replace(" ", "_")
-        if rid.startswith("cr"):
-            # Custom Admin Role
-            import_block = generate_import_block("okta_admin_role_custom", role_name, rid)
-            tf_lines.append(import_block)
-        else:
-            # Legacy Admin Role targets – placeholder for composite key
-            import_block = generate_import_block("okta_admin_role_targets", role_name, f"<user_id>/{rid}")
-            tf_lines.append(import_block)
-    
-    tf_lines.append("\n############################################")
-    tf_lines.append("# SAMPLE TERRAFORM RESOURCE BLOCKS")
-    tf_lines.append("############################################")
-    
-    # Resource Sets Resource Blocks (including ORNs)
-    if resource_sets:
-        tf_lines.append("\n# Resource Sets")
-        for rs in resource_sets:
-            rs_id = rs.get("id")
-            rs_label = rs.get("label") or f"resource_set_{rs_id}"
-            rs_name = rs_label.lower().replace(" ", "_")
-            try:
-                rs_resources = get_resource_set_resources(org_url, headers, rs_id)
-                orns = [r.get("orn") for r in rs_resources if r.get("orn")]
-            except Exception as ex:
-                print(f"[WARNING] Could not retrieve resources for resource set {rs_id}: {ex}")
-                orns = []
-            resources_tf = ",\n    ".join(f'"{o}"' for o in orns) if orns else "// TODO: Add resource endpoints"
-            block = f'''
-resource "okta_resource_set" "{rs_name}" {{
-  label       = "{rs_label}"
-  description = "{rs.get("description") or ""}"
-  resources   = [
-    {resources_tf}
-  ]
+            label = rs.get("label")
+            description = rs.get("description", "")
+            endpoints = fetch_resource_set_resources(okta_domain, rs_id, headers)
+            if terraform_format == "hcl":
+                endpoints_formatted = ", ".join([f'"{ep}"' for ep in endpoints])
+                terraform_block = f'''
+resource "okta_resource_set" "rs_{rs_id}" {{
+  label       = "{label}"
+  description = "{description}"
+  resources   = [{endpoints_formatted}]
 }}
-'''.strip()
-            tf_lines.append(block)
-    
-    # Custom Admin Roles Resource Blocks (for roles with IDs starting with "cr")
-    tf_lines.append("\n# Custom Admin Roles")
-    for rid, info in roles_dict.items():
-        if not rid.startswith("cr"):
-            continue
-        role_obj = info["role"]
-        role_label = role_obj.get("label") or role_obj.get("name") or f"role_{rid}"
-        role_name = role_label.lower().replace(" ", "_")
-        # Retrieve permissions from the API
-        try:
-            perms = get_role_permissions(org_url, headers, rid)
-            if perms:
-                permissions_tf = ",\n    ".join(f'"{p}"' for p in perms)
-            else:
-                permissions_tf = "// TODO: List permissions"
-        except Exception as ex:
-            print(f"[WARNING] Could not retrieve permissions for role {rid}: {ex}")
-            permissions_tf = "// TODO: List permissions"
-        block = f'''
-resource "okta_admin_role_custom" "{role_name}" {{
-  label       = "{role_label}"
-  description = "{role_obj.get("description") or ""}"
-  permissions = [
-    {permissions_tf}
-  ]
-}}
-'''.strip()
-        tf_lines.append(block)
-    
-    # Custom Role Assignments Sample Block (Early Access)
-    tf_lines.append("\n# Custom Role Assignments (Early Access)")
-    tf_lines.append('''
-# Example: Assign a custom role to users/groups using a resource set.
-# resource "okta_admin_role_custom_assignments" "example" {
-#   resource_set_id = okta_resource_set.<resource_set_name>.id
-#   custom_role_id  = okta_admin_role_custom.<custom_role_name>.id
-#   members = [
-#     "${local.org_url}/api/v1/users/<user_id>",
-#     "${local.org_url}/api/v1/groups/<group_id>"
-#   ]
-# }
-'''.strip())
-    
-    # Legacy Admin Role Targets Sample Block
-    tf_lines.append("\n# Legacy Admin Role Targets")
-    tf_lines.append('''
-# Example: Manage legacy role assignments.
-# resource "okta_admin_role_targets" "example" {
-#   user_id   = "<user_id>"
-#   role_type = "<ROLE_TYPE>"   // e.g., APP_ADMIN, GROUP_ADMIN, etc.
-#   apps      = ["<app_name>"]  // or specify groups instead
-# }
-'''.strip())
-    
-    return "\n".join(tf_lines)
 
-# --------------------------
-# Main Script
-# --------------------------
+'''
+            else:
+                terraform_block = json.dumps({
+                    "resource": {
+                        "okta_resource_set": {
+                            f"rs_{rs_id}": {
+                                "label": label,
+                                "description": description,
+                                "resources": endpoints
+                            }
+                        }
+                    }
+                }, indent=2) + "\n"
+            f.write(terraform_block)
 
 def main():
-    args = parse_args()
-    if args.org_url:
-        org_url = args.org_url.rstrip("/")
-    elif args.subdomain:
-        org_url = get_okta_domain(args.subdomain, args.domain_flag)
-    else:
-        sys.exit("Error: Provide either --org-url or both --subdomain and --domain-flag.")
+    parser = argparse.ArgumentParser(description="Generate Terraform config from Okta API data.")
+    parser.add_argument("--subdomain", required=True,
+                        help="Okta subdomain (e.g. eqtpartners)")
+    parser.add_argument("--domain-flag", choices=["default", "emea", "preview", "gov", "mil"], default="default",
+                        help="Domain flag to determine the Okta domain suffix")
+    parser.add_argument("--api-token", help="Okta API token", required=True)
+    parser.add_argument("--output-prefix", help="Prefix for the output Terraform file", default="okta")
+    parser.add_argument("--terraform-format", choices=["hcl", "json"], default="hcl",
+                        help="Output format for Terraform configuration (hcl or json)")
     
-    headers = get_headers(args.api_token)
-    
-    # Retrieve new IAM roles and resource sets
-    try:
-        new_roles = get_roles_new(org_url, headers)
-        print(f"[INFO] Retrieved {len(new_roles)} new IAM role(s) from /api/v1/iam/roles.")
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code in (404, 405):
-            print("[INFO] /api/v1/iam/roles not available. Skipping new roles.")
-            new_roles = []
-        else:
-            raise
-    
-    try:
-        resource_sets = get_resource_sets_new(org_url, headers)
-        print(f"[INFO] Retrieved {len(resource_sets)} resource set(s) from /api/v1/iam/resource-sets.")
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code in (404, 405):
-            print("[INFO] /api/v1/iam/resource-sets not available. Skipping resource sets.")
-            resource_sets = []
-        else:
-            raise
-    
-    # Retrieve legacy roles
-    try:
-        legacy_roles = get_roles_legacy(org_url, headers)
-        print(f"[INFO] Retrieved {len(legacy_roles)} legacy role(s) from /api/v1/roles.")
-    except requests.HTTPError as e:
-        if e.response is not None and e.response.status_code in (404, 405):
-            print("[INFO] /api/v1/roles not available. Skipping legacy roles.")
-            legacy_roles = []
-        else:
-            raise
-    
-    # Merge roles from new and legacy endpoints into a dictionary keyed by role ID
-    roles_dict = {}
-    for role in new_roles:
-        rid = role.get("id")
-        roles_dict[rid] = {
-            "role": role,
-            "assignments": {"users": [], "groups": []},
-            "source": "new"
-        }
-    for role in legacy_roles:
-        rid = role.get("id")
-        if rid in roles_dict:
-            roles_dict[rid]["source"] += "+legacy"
-        else:
-            roles_dict[rid] = {
-                "role": role,
-                "assignments": {"users": [], "groups": []},
-                "source": "legacy"
-            }
-    
-    # Retrieve assignments for each role
-    for rid, info in roles_dict.items():
-        assignments = {"users": [], "groups": []}
-        if rid.startswith("cr") or "new" in info["source"]:
-            try:
-                assignments = get_role_assignments_new(org_url, headers, rid)
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code in (404, 405):
-                    print(f"[WARNING] New assignment endpoint for role {rid} returned {e.response.status_code}. Skipping assignments for this role.")
-                else:
-                    raise
-        else:
-            try:
-                assignments["users"] = get_role_targets_users_legacy(org_url, headers, rid)
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code in (404, 405):
-                    print(f"[WARNING] Legacy user targets for role {rid} returned {e.response.status_code}.")
-                    assignments["users"] = []
-                else:
-                    raise
-            try:
-                assignments["groups"] = get_role_targets_groups_legacy(org_url, headers, rid)
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code in (404, 405):
-                    print(f"[WARNING] Legacy group targets for role {rid} returned {e.response.status_code}.")
-                    assignments["groups"] = []
-                else:
-                    raise
-        info["assignments"] = assignments
-    
-    # Generate Terraform code (including HCL import blocks)
-    tf_output = generate_tf_code(org_url, headers, resource_sets, new_roles, legacy_roles, roles_dict)
-    
-    if args.output_file:
-        with open(args.output_file, "w", encoding="utf-8") as f:
-            f.write(tf_output + "\n")
-        print(f"[INFO] Terraform code has been written to {args.output_file}")
-    else:
-        print(tf_output)
+    args = parser.parse_args()
+
+    okta_domain = get_okta_domain(args.subdomain, args.domain_flag)
+    print(f"Using Okta domain: {okta_domain}")
+
+    headers = {
+        "Authorization": f"SSWS {args.api_token}",
+        "Accept": "application/json"
+    }
+
+    tf_file = f"{args.output_prefix}_resources.tf"
+    with open(tf_file, "w") as f:
+        f.write("# Generated Terraform configuration for Okta resources\n\n")
+
+    roles = fetch_roles(okta_domain, headers)
+    resource_sets = fetch_resource_sets(okta_domain, headers)
+
+    generate_terraform_roles(roles, tf_file, args.terraform_format, okta_domain, headers)
+    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers)
+
+    print(f"Terraform configuration written to {tf_file}")
 
 if __name__ == "__main__":
     main()
