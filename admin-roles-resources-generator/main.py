@@ -55,11 +55,19 @@ def normalize_resource_name(label):
         normalized = "_" + normalized
     return normalized
 
-def substitute_member(member, group_map, user_map, app_map=None):
+def substitute_member(member, group_map, user_map, app_map=None, okta_domain=""):
     """
     Substitute a member URL with an environment-independent interpolation.
     Handles trailing segments (e.g. /users) appropriately.
+    Also checks for query filters (e.g. apps?filter=...) and escapes quotes.
     """
+    # Handle URLs that contain a query filter (e.g. filtering apps by name)
+    if "apps?filter" in member:
+        # Replace the Okta domain with the local interpolation and escape double quotes
+        new_url = member.replace(f"https://{okta_domain}", "${local.org_url}")
+        new_url = new_url.replace('"', '\\"')
+        return new_url
+
     # If the member URL is exactly the base endpoint for groups, users, or apps:
     if member.endswith("/api/v1/groups"):
         return "${local.org_url}/api/v1/groups"
@@ -94,7 +102,8 @@ def substitute_member(member, group_map, user_map, app_map=None):
         if app_map and aid in app_map:
             normalized = app_map[aid]
             return '${local.org_url}/api/v1/apps/${data.okta_app.' + normalized + '.id}' + extra
-    return member
+    # Otherwise, ensure any double quotes are escaped
+    return member.replace('"', '\\"')
 
 # ----- API Data Fetching Functions -----
 
@@ -434,7 +443,7 @@ def generate_terraform_resource_sets(resource_sets, tf_file, terraform_format, o
             label = rs.get("label")
             description = rs.get("description", "")
             endpoints = fetch_resource_set_resources(okta_domain, rs_id, headers)
-            substituted_endpoints = [substitute_member(ep, group_map, user_map, app_map) for ep in endpoints]
+            substituted_endpoints = [substitute_member(ep, group_map, user_map, app_map, okta_domain) for ep in endpoints]
             endpoints_formatted = ", ".join([f'"{ep}"' for ep in substituted_endpoints])
             normalized_name = normalize_resource_name(label)
             if terraform_format == "hcl":
@@ -739,7 +748,8 @@ locals {
     
     # Debug with Pandas (passing lookup mappings including apps)
     group_roles_by_group, user_roles_by_user = debug_with_pandas(
-        resource_sets, roles, okta_domain, headers, tf_file, args, group_id_to_normalized, user_id_to_normalized, app_id_to_normalized
+        resource_sets, roles, okta_domain, headers, tf_file, args,
+        group_id_to_normalized, user_id_to_normalized, app_id_to_normalized
     )
     
     # Write import blocks for IAM roles and resource sets.
@@ -767,7 +777,8 @@ locals {
     
     # Generate main IAM role and resource set blocks.
     generate_terraform_roles(roles, tf_file, args.terraform_format, okta_domain, headers)
-    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers, group_id_to_normalized, user_id_to_normalized, app_id_to_normalized)
+    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers,
+                                     group_id_to_normalized, user_id_to_normalized, app_id_to_normalized)
     
     # Generate user admin roles using interpolation.
     generate_terraform_user_roles(user_roles_by_user, tf_file, args.terraform_format, user_id_to_normalized)
