@@ -4,12 +4,13 @@ import requests
 import json
 import re
 import time
+import pandas as pd
+import subprocess
+
+# ----- Helper Functions -----
 
 def get_okta_domain(subdomain, domain_flag):
-    """
-    Build the Okta domain URL using a subdomain and domain_flag.
-    domain_flag can be 'default', 'emea', 'preview', 'gov', or 'mil'.
-    """
+    """Build the Okta domain URL using a subdomain and domain_flag."""
     domain_map = {
         "default": "okta.com",
         "emea": "okta-emea.com",
@@ -21,7 +22,7 @@ def get_okta_domain(subdomain, domain_flag):
     return f"{subdomain}.{domain}"
 
 def get_api_data(url, headers, retry_count=3):
-    """Helper function to query an Okta API endpoint with basic rate-limit handling."""
+    """Query an Okta API endpoint with basic rate-limit handling."""
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json(), response.headers
@@ -46,6 +47,57 @@ def get_api_data(url, headers, retry_count=3):
         print(f"Error: {response.status_code} when querying {url}")
         return None, response.headers
 
+def normalize_resource_name(label):
+    """Normalize a label to a valid Terraform resource name."""
+    normalized = label.lower().replace(" ", "_")
+    normalized = re.sub(r'[^a-z0-9_]', '', normalized)
+    if normalized and normalized[0].isdigit():
+        normalized = "_" + normalized
+    return normalized
+
+def substitute_member(member, group_map, user_map, app_map=None):
+    """
+    Substitute a member URL with an environment-independent interpolation.
+    Handles trailing segments (e.g. /users) appropriately.
+    """
+    # If the member URL is exactly the base endpoint for groups, users, or apps:
+    if member.endswith("/api/v1/groups"):
+        return "${local.org_url}/api/v1/groups"
+    if member.endswith("/api/v1/users"):
+        return "${local.org_url}/api/v1/users"
+    if member.endswith("/api/v1/apps"):
+        return "${local.org_url}/api/v1/apps"
+    
+    # For groups: capture group id and optional trailing segment (e.g. /users)
+    group_pattern = r'/api/v1/groups/([^/]+)(/.*)?$'
+    m_group = re.search(group_pattern, member)
+    if m_group:
+        gid = m_group.group(1)
+        extra = m_group.group(2) if m_group.group(2) else ""
+        if gid in group_map:
+            normalized = group_map[gid]
+            return '${local.org_url}/api/v1/groups/${data.okta_group.' + normalized + '.id}' + extra
+    # For users:
+    user_pattern = r'/api/v1/users/([^/]+)$'
+    m_user = re.search(user_pattern, member)
+    if m_user:
+        uid = m_user.group(1)
+        if uid in user_map:
+            normalized = user_map[uid]
+            return '${local.org_url}/api/v1/users/${data.okta_user.' + normalized + '.id}'
+    # For apps:
+    app_pattern = r'/api/v1/apps/([^/]+)(/.*)?$'
+    m_app = re.search(app_pattern, member)
+    if m_app:
+        aid = m_app.group(1)
+        extra = m_app.group(2) if m_app.group(2) else ""
+        if app_map and aid in app_map:
+            normalized = app_map[aid]
+            return '${local.org_url}/api/v1/apps/${data.okta_app.' + normalized + '.id}' + extra
+    return member
+
+# ----- API Data Fetching Functions -----
+
 def fetch_roles(okta_domain, headers):
     roles = []
     endpoint = f"https://{okta_domain}/api/v1/iam/roles"
@@ -60,9 +112,9 @@ def fetch_roles(okta_domain, headers):
     return roles
 
 def fetch_role_permissions(okta_domain, role_id, headers):
-    permissions_endpoint = f"https://{okta_domain}/api/v1/iam/roles/{role_id}/permissions"
-    print(f"Fetching permissions from: {permissions_endpoint}")
-    data, _ = get_api_data(permissions_endpoint, headers)
+    endpoint = f"https://{okta_domain}/api/v1/iam/roles/{role_id}/permissions"
+    print(f"Fetching permissions from: {endpoint}")
+    data, _ = get_api_data(endpoint, headers)
     if data and "permissions" in data:
         return [perm.get("label") for perm in data["permissions"] if perm.get("label")]
     return []
@@ -89,17 +141,17 @@ def fetch_resource_set_resources(okta_domain, resource_set_id, headers):
         for res in data["resources"]:
             links = res.get("_links")
             if not links:
-                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) missing '_links'.")
+                print(f"DEBUG: Resource {res.get('id')} missing '_links'.")
                 continue
             self_link_obj = links.get("self")
             if not self_link_obj:
-                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) missing 'self' link.")
+                print(f"DEBUG: Resource {res.get('id')} missing 'self' link.")
                 continue
             href = self_link_obj.get("href")
             if href:
                 resources.append(href)
             else:
-                print(f"DEBUG: Resource {res.get('id')} (ORN: {res.get('orn')}) has 'self' but no 'href'.")
+                print(f"DEBUG: Resource {res.get('id')} has 'self' but no 'href'.")
     else:
         print(f"DEBUG: No 'resources' key in response for resource set {resource_set_id}.")
     return resources
@@ -158,25 +210,302 @@ def fetch_user_roles(okta_domain, user_id, headers):
     data, _ = get_api_data(endpoint, headers)
     return data if data else []
 
-# ----- Aggregation for Custom Assignments -----
+def fetch_apps(okta_domain, headers):
+    """Query the Okta Applications API and return the list of apps."""
+    apps = []
+    endpoint = f"https://{okta_domain}/api/v1/apps"
+    while endpoint:
+        print(f"Fetching apps from: {endpoint}")
+        data, hdrs = get_api_data(endpoint, headers)
+        if not data:
+            break
+        apps.extend(data)
+        link_header = hdrs.get("Link")
+        next_url = None
+        if link_header:
+            links = re.findall(r'<([^>]+)>;\s*rel="next"', link_header)
+            if links:
+                next_url = links[0]
+        endpoint = next_url
+    return apps
+
+# ----- Debugging with Pandas & CSV Output -----
+
+def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args, group_map, user_map, app_map):
+    # Debug Resource Sets
+    df_rs = pd.DataFrame(resource_sets)
+    print("Resource Sets DataFrame:")
+    if not df_rs.empty:
+        print(df_rs[['id', 'label', 'description']].head())
+        df_rs.to_csv("debug_resource_sets.csv", index=False)
+        print("Resource sets CSV written to debug_resource_sets.csv")
+    else:
+        print("No resource sets data available.")
+    
+    # Debug IAM Roles with normalized names
+    df_roles = pd.DataFrame(roles)
+    if not df_roles.empty:
+        df_roles["normalized"] = df_roles["label"].apply(normalize_resource_name)
+        print("IAM Roles DataFrame with Normalized Names:")
+        print(df_roles[['id', 'label', 'normalized', 'description']].head())
+        df_roles.to_csv("debug_iam_roles.csv", index=False)
+        print("IAM roles CSV written to debug_iam_roles.csv")
+    else:
+        print("No roles data available.")
+    
+    # Debug Groups
+    groups = fetch_all_groups(okta_domain, headers)
+    df_groups = pd.DataFrame(groups)
+    if not df_groups.empty:
+        if "profile.name" in df_groups.columns:
+            df_groups.rename(columns={"profile.name": "name"}, inplace=True)
+        print("Groups DataFrame:")
+        print(df_groups.head())
+        df_groups.to_csv("debug_groups.csv", index=False)
+        print("Groups CSV written to debug_groups.csv")
+    else:
+        print("No groups data available.")
+    
+    # Debug Users
+    users = fetch_all_users(okta_domain, headers)
+    df_users = pd.DataFrame(users)
+    if not df_users.empty:
+        print("Users DataFrame:")
+        print(df_users.head())
+        df_users.to_csv("debug_users.csv", index=False)
+        print("Users CSV written to debug_users.csv")
+    else:
+        print("No users data available.")
+    
+    # Debug Apps
+    apps = fetch_apps(okta_domain, headers)
+    df_apps = pd.DataFrame(apps)
+    if not df_apps.empty:
+        print("Apps DataFrame:")
+        print(df_apps.head())
+        df_apps.to_csv("debug_apps.csv", index=False)
+        print("Apps CSV written to debug_apps.csv")
+    else:
+        print("No apps data available.")
+    
+    # For groups and users, fetch roles
+    group_roles_by_group = {}
+    for group in groups:
+        gid = group.get("id")
+        assignments = fetch_group_roles(okta_domain, gid, headers)
+        if assignments:
+            group_roles_by_group[gid] = assignments
+
+    user_roles_by_user = {}
+    for user in users:
+        uid = user.get("id")
+        assignments = fetch_user_roles(okta_domain, uid, headers)
+        if assignments:
+            user_roles_by_user[uid] = assignments
+
+    # Generate Terraform blocks for group and user roles
+    generate_import_blocks_for_group_roles(group_roles_by_group, tf_file)
+    generate_terraform_group_roles(group_roles_by_group, tf_file, args.terraform_format, group_map)
+    generate_import_blocks_for_user_roles(user_roles_by_user, tf_file)
+    generate_terraform_user_roles(user_roles_by_user, tf_file, args.terraform_format, user_map)
+
+    return group_roles_by_group, user_roles_by_user
+
+# ----- Generate Data Blocks for Data Sources -----
+
+def generate_data_blocks_for_groups(groups, data_tf_file):
+    with open(data_tf_file, "w") as f:
+        f.write("# Generated Data Blocks for Okta Groups\n\n")
+        for group in groups:
+            group_id = group.get("id")
+            name = group.get("profile", {}).get("name") or group.get("name") or group_id
+            normalized = normalize_resource_name(name)
+            block = f'''
+data "okta_group" "{normalized}" {{
+  id = "{group_id}"
+}}
+'''
+            f.write(block)
+
+def generate_data_blocks_for_users(users, data_tf_file):
+    with open(data_tf_file, "a") as f:
+        f.write("\n# Generated Data Blocks for Okta Users\n\n")
+        for user in users:
+            user_id = user.get("id")
+            key = user.get("email") or user.get("login") or user_id
+            normalized = normalize_resource_name(key)
+            block = f'''
+data "okta_user" "{normalized}" {{
+  id = "{user_id}"
+}}
+'''
+            f.write(block)
+
+def generate_data_blocks_for_resource_sets(resource_sets, data_tf_file):
+    with open(data_tf_file, "a") as f:
+        f.write("\n# Generated Data Blocks for Okta Resource Sets\n\n")
+        for rs in resource_sets:
+            rs_id = rs.get("id")
+            label = rs.get("label")
+            normalized = normalize_resource_name(label)
+            block = f'''
+data "okta_resource_set" "{normalized}" {{
+  id = "{rs_id}"
+}}
+'''
+            f.write(block)
+
+def generate_data_blocks_for_custom_roles(roles, data_tf_file):
+    with open(data_tf_file, "a") as f:
+        f.write("\n# Generated Data Blocks for Okta Custom Admin Roles\n\n")
+        for role in roles:
+            if role.get("id", "").startswith("cr"):
+                role_id = role.get("id")
+                label = role.get("label")
+                normalized = normalize_resource_name(label)
+                block = f'''
+data "okta_admin_role_custom" "{normalized}" {{
+  id = "{role_id}"
+}}
+'''
+                f.write(block)
+
+def generate_data_blocks_for_apps(app_map, data_tf_file):
+    if not app_map:
+        return
+    with open(data_tf_file, "a") as f:
+        f.write("\n# Generated Data Blocks for Okta Apps\n\n")
+        for app_id, normalized in app_map.items():
+            block = f'''
+data "okta_app" "{normalized}" {{
+  id = "{app_id}"
+}}
+'''
+            f.write(block)
+
+# ----- Terraform Resource Block Generators -----
+
+def generate_terraform_roles(roles, tf_file, terraform_format, okta_domain, headers):
+    with open(tf_file, "a") as f:
+        f.write("\n# Terraform configuration for Okta IAM Admin Roles (okta_admin_role_custom)\n\n")
+        for role in roles:
+            role_id = role.get("id")
+            label = role.get("label")
+            description = role.get("description", "")
+            permissions = fetch_role_permissions(okta_domain, role_id, headers)
+            normalized_name = normalize_resource_name(label)
+            if terraform_format == "hcl":
+                perms_formatted = ", ".join([f'"{perm}"' for perm in permissions])
+                block = f'''
+resource "okta_admin_role_custom" "{normalized_name}" {{
+  label       = "{label}"
+  description = "{description}"
+  permissions = [{perms_formatted}]
+  
+  tags = {{
+    resource_id    = "{role_id}"
+    resource_label = "{label}"
+  }}
+}}
+'''
+            else:
+                block = json.dumps({
+                    "resource": {
+                        "okta_admin_role_custom": {
+                            normalized_name: {
+                                "label": label,
+                                "description": description,
+                                "permissions": permissions,
+                                "tags": {
+                                    "resource_id": role_id,
+                                    "resource_label": label
+                                }
+                            }
+                        }
+                    }
+                }, indent=2) + "\n"
+            f.write(block)
+
+def generate_terraform_resource_sets(resource_sets, tf_file, terraform_format, okta_domain, headers, group_map, user_map, app_map):
+    with open(tf_file, "a") as f:
+        f.write("\n# Terraform configuration for Okta Resource Sets (okta_resource_set)\n\n")
+        for rs in resource_sets:
+            rs_id = rs.get("id")
+            label = rs.get("label")
+            description = rs.get("description", "")
+            endpoints = fetch_resource_set_resources(okta_domain, rs_id, headers)
+            substituted_endpoints = [substitute_member(ep, group_map, user_map, app_map) for ep in endpoints]
+            endpoints_formatted = ", ".join([f'"{ep}"' for ep in substituted_endpoints])
+            normalized_name = normalize_resource_name(label)
+            if terraform_format == "hcl":
+                block = f'''
+resource "okta_resource_set" "{normalized_name}" {{
+  label       = "{label}"
+  description = "{description}"
+  resources   = [{endpoints_formatted}]
+  
+  tags = {{
+    resource_id    = "{rs_id}"
+    resource_label = "{label}"
+  }}
+}}
+'''
+            else:
+                block = json.dumps({
+                    "resource": {
+                        "okta_resource_set": {
+                            normalized_name: {
+                                "label": label,
+                                "description": description,
+                                "resources": substituted_endpoints,
+                                "tags": {
+                                    "resource_id": rs_id,
+                                    "resource_label": label
+                                }
+                            }
+                        }
+                    }
+                }, indent=2) + "\n"
+            f.write(block)
+
+def generate_import_blocks_for_resource_sets(resource_sets, tf_file):
+    with open(tf_file, "a") as f:
+        f.write("\n# Import blocks for Okta Resource Sets\n")
+        for rs in resource_sets:
+            rs_id = rs.get("id")
+            block = f'''
+import {{
+  for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
+  to       = okta_resource_set.{normalize_resource_name(rs.get("label", rs_id))}[0]
+  id       = "{rs_id}"
+}}
+'''
+            f.write(block)
+
+def generate_import_blocks_for_admin_roles(roles, tf_file):
+    with open(tf_file, "a") as f:
+        f.write("\n# Import blocks for Okta IAM Admin Roles\n")
+        for role in roles:
+            role_id = role.get("id")
+            block = f'''
+import {{
+  for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
+  to       = okta_admin_role_custom.{normalize_resource_name(role.get("label", role_id))}
+  id       = "{role_id}"
+}}
+'''
+            f.write(block)
 
 def aggregate_custom_assignments(group_roles_by_group, user_roles_by_user):
-    """
-    Aggregate custom role assignments from groups and users.
-    Returns a dict keyed by (custom_role_id, resource_set_id) with a set of member hrefs.
-    """
     custom_assignments = {}
-    # Process group custom assignments.
     for group_id, assignments in group_roles_by_group.items():
         for assignment in assignments:
             if assignment.get("type") == "CUSTOM":
                 custom_role_id = assignment.get("role")
                 resource_set_id = assignment.get("resource-set")
                 key = (custom_role_id, resource_set_id)
-                # Escape curly braces for literal output.
                 member_href = '${{local.org_url}}/api/v1/groups/{}'.format(group_id)
                 custom_assignments.setdefault(key, set()).add(member_href)
-    # Process user custom assignments.
     for user_id, assignments in user_roles_by_user.items():
         for assignment in assignments:
             if assignment.get("type") == "CUSTOM":
@@ -187,17 +516,26 @@ def aggregate_custom_assignments(group_roles_by_group, user_roles_by_user):
                 custom_assignments.setdefault(key, set()).add(member_href)
     return custom_assignments
 
-def generate_terraform_custom_assignments(custom_assignments, tf_file, terraform_format):
+def generate_terraform_custom_assignments(custom_assignments, tf_file, terraform_format, group_map, user_map, resource_set_map, custom_role_map):
     with open(tf_file, "a") as f:
         f.write("\n# Terraform configuration for Custom Role Assignments (okta_admin_role_custom_assignments)\n\n")
         for (custom_role_id, resource_set_id), members in custom_assignments.items():
-            resource_name = f"ca_{custom_role_id}_{resource_set_id}"
-            members_list = ", ".join([f'"{m}"' for m in members])
+            resource_name = f"ca_{normalize_resource_name(custom_role_id)}_{normalize_resource_name(resource_set_id)}"
+            substituted_members = [substitute_member(m, group_map, user_map) for m in members]
+            members_list = ", ".join([f'"{m}"' for m in substituted_members])
+            if resource_set_id in resource_set_map:
+                resource_set_reference = f"okta_resource_set.{resource_set_map[resource_set_id]}.id"
+            else:
+                resource_set_reference = f'"{resource_set_id}"'
+            if custom_role_id in custom_role_map:
+                custom_role_reference = f"okta_admin_role_custom.{custom_role_map[custom_role_id]}.id"
+            else:
+                custom_role_reference = f'"{custom_role_id}"'
             if terraform_format == "hcl":
                 block = f'''
 resource "okta_admin_role_custom_assignments" "{resource_name}" {{
-  resource_set_id = "{resource_set_id}"
-  custom_role_id  = "{custom_role_id}"
+  resource_set_id = {resource_set_reference}
+  custom_role_id  = {custom_role_reference}
   members         = [{members_list}]
 }}
 '''
@@ -206,9 +544,9 @@ resource "okta_admin_role_custom_assignments" "{resource_name}" {{
                     "resource": {
                         "okta_admin_role_custom_assignments": {
                             resource_name: {
-                                "resource_set_id": resource_set_id,
-                                "custom_role_id": custom_role_id,
-                                "members": list(members)
+                                "resource_set_id": resource_set_reference,
+                                "custom_role_id": custom_role_reference,
+                                "members": substituted_members
                             }
                         }
                     }
@@ -219,7 +557,7 @@ def generate_import_blocks_for_custom_assignments(custom_assignments, tf_file):
     with open(tf_file, "a") as f:
         f.write("\n# Import blocks for Custom Role Assignments\n")
         for (custom_role_id, resource_set_id) in custom_assignments.keys():
-            resource_name = f"ca_{custom_role_id}_{resource_set_id}"
+            resource_name = f"ca_{normalize_resource_name(custom_role_id)}_{normalize_resource_name(resource_set_id)}"
             block = f'''
 import {{
   for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
@@ -229,12 +567,14 @@ import {{
 '''
             f.write(block)
 
-# ----- Generate Non-Custom Group and User Roles -----
-
-def generate_terraform_group_roles(group_roles_by_group, tf_file, terraform_format):
+def generate_terraform_group_roles(group_roles_by_group, tf_file, terraform_format, group_map):
     with open(tf_file, "a") as f:
         f.write("\n# Terraform configuration for Standard Group Roles (okta_group_role)\n\n")
         for group_id, assignments in group_roles_by_group.items():
+            if group_id in group_map:
+                group_ref = f"data.okta_group.{group_map[group_id]}.id"
+            else:
+                group_ref = f'"{group_id}"'
             for assignment in assignments:
                 if assignment.get("type") == "CUSTOM":
                     continue
@@ -242,8 +582,13 @@ def generate_terraform_group_roles(group_roles_by_group, tf_file, terraform_form
                 resource_name = f"group_{group_id}_{assignment.get('id')}"
                 block = f'''
 resource "okta_group_role" "{resource_name}" {{
-  group_id  = "{group_id}"
+  group_id  = {group_ref}
   role_type = "{role_type}"
+  
+  tags = {{
+    resource_id    = "{assignment.get('id')}"
+    resource_label = "{assignment.get('label', 'n/a')}"
+  }}
 }}
 '''
                 f.write(block)
@@ -265,7 +610,7 @@ import {{
 '''
                 f.write(block)
 
-def generate_terraform_user_roles(user_roles_by_user, tf_file, terraform_format):
+def generate_terraform_user_roles(user_roles_by_user, tf_file, terraform_format, user_map):
     with open(tf_file, "a") as f:
         f.write("\n# Terraform configuration for Standard User Admin Roles (okta_user_admin_roles)\n\n")
         for user_id, assignments in user_roles_by_user.items():
@@ -274,11 +619,20 @@ def generate_terraform_user_roles(user_roles_by_user, tf_file, terraform_format)
                 continue
             roles_list = list(set(standard_roles))
             roles_formatted = ", ".join([f'"{r}"' for r in roles_list])
+            if user_id in user_map:
+                user_reference = f"data.okta_user.{user_map[user_id]}.id"
+            else:
+                user_reference = f'"{user_id}"'
             resource_name = f"user_{user_id}"
             block = f'''
 resource "okta_user_admin_roles" "{resource_name}" {{
-  user_id     = "{user_id}"
+  user_id     = {user_reference}
   admin_roles = [{roles_formatted}]
+  
+  tags = {{
+    resource_id    = {user_reference}
+    resource_label = "User {user_map.get(user_id, user_id)}"
+  }}
 }}
 '''
             f.write(block)
@@ -300,98 +654,6 @@ import {{
 '''
             f.write(block)
 
-# ----- Main IAM Role and Resource Set Blocks -----
-
-def generate_terraform_roles(roles, tf_file, terraform_format, okta_domain, headers):
-    with open(tf_file, "a") as f:
-        f.write("\n# Terraform configuration for Okta IAM Admin Roles (okta_admin_role_custom)\n\n")
-        for role in roles:
-            role_id = role.get("id")
-            label = role.get("label")
-            description = role.get("description", "")
-            permissions = fetch_role_permissions(okta_domain, role_id, headers)
-            if terraform_format == "hcl":
-                perms_formatted = ", ".join([f'"{perm}"' for perm in permissions])
-                block = f'''
-resource "okta_admin_role_custom" "role_{role_id}" {{
-  label       = "{label}"
-  description = "{description}"
-  permissions = [{perms_formatted}]
-}}
-'''
-            else:
-                block = json.dumps({
-                    "resource": {
-                        "okta_admin_role_custom": {
-                            f"role_{role_id}": {
-                                "label": label,
-                                "description": description,
-                                "permissions": permissions
-                            }
-                        }
-                    }
-                }, indent=2) + "\n"
-            f.write(block)
-
-def generate_terraform_resource_sets(resource_sets, tf_file, terraform_format, okta_domain, headers):
-    with open(tf_file, "a") as f:
-        f.write("\n# Terraform configuration for Okta Resource Sets (okta_resource_set)\n\n")
-        for rs in resource_sets:
-            rs_id = rs.get("id")
-            label = rs.get("label")
-            description = rs.get("description", "")
-            endpoints = fetch_resource_set_resources(okta_domain, rs_id, headers)
-            if terraform_format == "hcl":
-                endpoints_formatted = ", ".join([f'"{ep}"' for ep in endpoints])
-                block = f'''
-resource "okta_resource_set" "rs_{rs_id}" {{
-  label       = "{label}"
-  description = "{description}"
-  resources   = [{endpoints_formatted}]
-}}
-'''
-            else:
-                block = json.dumps({
-                    "resource": {
-                        "okta_resource_set": {
-                            f"rs_{rs_id}": {
-                                "label": label,
-                                "description": description,
-                                "resources": endpoints
-                            }
-                        }
-                    }
-                }, indent=2) + "\n"
-            f.write(block)
-
-def generate_import_blocks_for_resource_sets(resource_sets, tf_file):
-    with open(tf_file, "a") as f:
-        f.write("\n# Import blocks for Okta Resource Sets\n")
-        for rs in resource_sets:
-            rs_id = rs.get("id")
-            block = f'''
-import {{
-  for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
-  to       = okta_resource_set.rs_{rs_id}[0]
-  id       = "{rs_id}"
-}}
-'''
-            f.write(block)
-
-def generate_import_blocks_for_admin_roles(roles, tf_file):
-    with open(tf_file, "a") as f:
-        f.write("\n# Import blocks for Okta IAM Admin Roles\n")
-        for role in roles:
-            role_id = role.get("id")
-            block = f'''
-import {{
-  for_each = var.CONFIG == "prod" ? toset(["prod"]) : []
-  to       = okta_admin_role_custom.role_{role_id}
-  id       = "{role_id}"
-}}
-'''
-            f.write(block)
-
 # ----- Main Function -----
 
 def main():
@@ -405,6 +667,7 @@ def main():
                         help="Output format for Terraform configuration (hcl or json)")
     parser.add_argument("--all-groups", action="store_true", help="Iterate over all groups to fetch group roles")
     parser.add_argument("--all-users", action="store_true", help="Iterate over all users to fetch user roles")
+    parser.add_argument("--tf-fmt", action="store_true", help="Run 'terraform fmt' on the generated file")
     
     args = parser.parse_args()
 
@@ -417,6 +680,8 @@ def main():
     }
 
     tf_file = f"{args.output_prefix}_resources.tf"
+    data_tf_file = "data-admin.tf"
+
     with open(tf_file, "w") as f:
         f.write("""# Generated Terraform configuration for Okta resources
 
@@ -430,54 +695,95 @@ locals {
 
 """)
     
-    # Fetch IAM roles and resource sets.
+    # Fetch roles, resource sets, and apps.
     roles = fetch_roles(okta_domain, headers)
     resource_sets = fetch_resource_sets(okta_domain, headers)
+    apps = fetch_apps(okta_domain, headers)
+    
+    # Build an app lookup mapping using Pandas.
+    df_apps = pd.DataFrame(apps)
+    if not df_apps.empty and "label" in df_apps.columns:
+        df_apps["normalized"] = df_apps["label"].apply(normalize_resource_name)
+    else:
+        df_apps["normalized"] = df_apps["id"].apply(normalize_resource_name)
+    app_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_apps.iterrows() }
+    
+    # Fetch groups and users.
+    groups = fetch_all_groups(okta_domain, headers)
+    users = fetch_all_users(okta_domain, headers)
+    
+    # Build lookup mappings for groups and users using Pandas.
+    df_groups = pd.DataFrame(groups)
+    if not df_groups.empty and "profile.name" in df_groups.columns:
+        df_groups["normalized"] = df_groups["profile.name"].apply(normalize_resource_name)
+    else:
+        df_groups["normalized"] = df_groups["id"].apply(normalize_resource_name)
+    group_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_groups.iterrows() }
+    
+    df_users = pd.DataFrame(users)
+    if not df_users.empty and "email" in df_users.columns:
+        df_users["normalized"] = df_users["email"].apply(normalize_resource_name)
+    else:
+        df_users["normalized"] = df_users["id"].apply(normalize_resource_name)
+    user_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_users.iterrows() }
+    
+    # Export debug CSVs
+    df_apps.to_csv("debug_apps.csv", index=False)
+    print("Apps CSV written to debug_apps.csv")
+    df_groups.to_csv("debug_groups.csv", index=False)
+    print("Groups CSV written to debug_groups.csv")
+    df_users.to_csv("debug_users.csv", index=False)
+    print("Users CSV written to debug_users.csv")
+    pd.DataFrame(resource_sets).to_csv("debug_resource_sets.csv", index=False)
+    print("Resource sets CSV written to debug_resource_sets.csv")
+    
+    # Debug with Pandas (passing lookup mappings including apps)
+    group_roles_by_group, user_roles_by_user = debug_with_pandas(
+        resource_sets, roles, okta_domain, headers, tf_file, args, group_id_to_normalized, user_id_to_normalized, app_id_to_normalized
+    )
     
     # Write import blocks for IAM roles and resource sets.
     generate_import_blocks_for_resource_sets(resource_sets, tf_file)
     generate_import_blocks_for_admin_roles(roles, tf_file)
     
-    # Process groups and users if requested.
-    group_roles_by_group = {}
-    user_roles_by_user = {}
-    if args.all_groups:
-        groups = fetch_all_groups(okta_domain, headers)
-        for group in groups:
-            group_id = group.get("id")
-            assignments = fetch_group_roles(okta_domain, group_id, headers)
-            if assignments:
-                group_roles_by_group[group_id] = assignments
-        generate_import_blocks_for_group_roles(group_roles_by_group, tf_file)
-        generate_terraform_group_roles(group_roles_by_group, tf_file, args.terraform_format)
-    if args.all_users:
-        users = fetch_all_users(okta_domain, headers)
-        for user in users:
-            user_id = user.get("id")
-            assignments = fetch_user_roles(okta_domain, user_id, headers)
-            if assignments:
-                user_roles_by_user[user_id] = assignments
-        generate_import_blocks_for_user_roles(user_roles_by_user, tf_file)
-        generate_terraform_user_roles(user_roles_by_user, tf_file, args.terraform_format)
+    # Build lookup mappings for resource sets and custom roles.
+    resource_set_map = { rs.get("id"): normalize_resource_name(rs.get("label"))
+                         for rs in resource_sets }
+    custom_role_map = { role.get("id"): normalize_resource_name(role.get("label"))
+                        for role in roles if role.get("id", "").startswith("cr") }
     
-    # Aggregate custom assignments and generate blocks.
+    # Generate data blocks for data sources.
+    generate_data_blocks_for_groups(groups, data_tf_file)
+    generate_data_blocks_for_users(users, data_tf_file)
+    generate_data_blocks_for_resource_sets(resource_sets, data_tf_file)
+    generate_data_blocks_for_custom_roles(roles, data_tf_file)
+    generate_data_blocks_for_apps(app_id_to_normalized, data_tf_file)
+    
+    # Aggregate custom assignments and generate custom assignment blocks.
     custom_assignments = aggregate_custom_assignments(group_roles_by_group, user_roles_by_user)
     generate_import_blocks_for_custom_assignments(custom_assignments, tf_file)
-    generate_terraform_custom_assignments(custom_assignments, tf_file, args.terraform_format)
+    generate_terraform_custom_assignments(custom_assignments, tf_file, args.terraform_format,
+                                          group_id_to_normalized, user_id_to_normalized, resource_set_map, custom_role_map)
     
-    # Generate the main IAM role and resource set blocks.
+    # Generate main IAM role and resource set blocks.
     generate_terraform_roles(roles, tf_file, args.terraform_format, okta_domain, headers)
-    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers)
+    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers, group_id_to_normalized, user_id_to_normalized, app_id_to_normalized)
     
-    # --- Store complete user API data as a Terraform locals block for interpolation ---
-    users = fetch_all_users(okta_domain, headers)
-    user_map = { user["email"]: user["id"] for user in users if "email" in user and "id" in user }
-    locals_block = "locals {\n  user_map = " + json.dumps(user_map, indent=2) + "\n}\n"
-    with open(tf_file, "a") as f:
-        f.write("\n# Locals mapping for users (for interpolation)\n")
-        f.write(locals_block)
+    # Generate user admin roles using interpolation.
+    generate_terraform_user_roles(user_roles_by_user, tf_file, args.terraform_format, user_id_to_normalized)
     
+    # Optionally run 'terraform fmt' on the generated file.
+    if args.tf_fmt:
+        print("Running 'terraform fmt' on the generated file...")
+        result = subprocess.run(["terraform", "fmt", tf_file], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("terraform fmt completed successfully.")
+        else:
+            print("Error running terraform fmt:")
+            print(result.stderr)
+
     print(f"Terraform configuration written to {tf_file}")
+    print(f"Data blocks for groups, users, resource sets, custom roles, and apps written to {data_tf_file}")
 
 if __name__ == "__main__":
     main()
