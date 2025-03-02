@@ -55,7 +55,7 @@ def fetch_app(base_url, app_id, api_token):
 def fetch_domains(base_url, api_token):
     """
     Fetch domains from the Okta API endpoint.
-    The endpoint returns a JSON object with a "domains" key.
+    Returns a list of domain objects.
     """
     url = f"{base_url}/api/v1/domains"
     headers = {"Authorization": f"SSWS {api_token}"} if api_token else {}
@@ -67,8 +67,7 @@ def fetch_domains(base_url, api_token):
 def sanitize_tf_name(name):
     """
     Sanitize a string to be used as a Terraform resource name:
-    lowercases, replaces spaces with underscores,
-    and removes non-alphanumeric or underscore characters.
+    Lowercases, replaces spaces with underscores, and removes non-alphanumeric characters.
     """
     name = name.lower().replace(" ", "_")
     return re.sub(r'[^a-z0-9_]', '', name)
@@ -76,9 +75,7 @@ def sanitize_tf_name(name):
 def generate_brand_tf(brand, env):
     """
     Generates a Terraform resource block for an okta_brand.
-    For production, if defaultApp exists, includes a reference to the okta_app data block.
-    For preview, it omits the default_app_app_instance_id attribute.
-    Also includes a count line and an import snippet comment.
+    Returns a tuple: (resource_block, import_block)
     """
     lines = []
     lines.append(f'resource "okta_brand" "brand_{brand["id"]}" {{')
@@ -92,7 +89,6 @@ def generate_brand_tf(brand, env):
         app = brand["defaultApp"]
         if app.get("appInstanceId"):
             if env == "prod":
-                # In production, reference the data block by friendly name.
                 lines.append(f'  default_app_app_instance_id = data.okta_app.app_{app["appInstanceId"]}_by_label[0].id')
             else:
                 lines.append(f'  # default_app_app_instance_id omitted for preview environment')
@@ -103,19 +99,18 @@ def generate_brand_tf(brand, env):
     lines.append("}")
     resource_block = "\n".join(lines)
     import_block = (
-        f'# Import block for okta_brand.brand_{brand["id"]}\n'
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
         f'  to       = okta_brand.brand_{brand["id"]}[0]\n'
         f'  id       = "{brand["id"]}"\n'
         f'}}\n'
     )
-    return resource_block + "\n\n" + import_block
+    return resource_block, import_block
 
 def generate_theme_tf(theme, brand_id, env):
     """
     Generates a Terraform resource block for an okta_theme.
-    Adds a count attribute and an import block snippet.
+    Returns a tuple: (resource_block, import_block)
     """
     lines = []
     lines.append(f'resource "okta_theme" "theme_{theme["id"]}" {{')
@@ -146,33 +141,18 @@ def generate_theme_tf(theme, brand_id, env):
     lines.append("}")
     resource_block = "\n".join(lines)
     import_block = (
-        f'# Import block for okta_theme.theme_{theme["id"]}\n'
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
         f'  to       = okta_theme.theme_{theme["id"]}[0]\n'
         f'  id       = "{theme["id"]}"\n'
         f'}}\n'
     )
-    return resource_block + "\n\n" + import_block
-
-def generate_app_data_block(app_id, app_label):
-    """
-    Generates a Terraform data block for an okta_app using a search by label.
-    The data block resource name is built from the app_id plus the sanitized label.
-    """
-    friendly_name = sanitize_tf_name(app_label)
-    lines = []
-    lines.append(f'data "okta_app" "app_{app_id}_by_label" {{')
-    lines.append(f'  count = var.CONFIG == "prod" ? 1 : 0')
-    lines.append(f'  label = "{app_label}"')
-    lines.append("}")
-    return "\n".join(lines)
+    return resource_block, import_block
 
 def generate_domain_tf(domain, env):
     """
     Generates a Terraform resource block for an okta_domain.
-    Sets the required "name" attribute and optionally the "brand_id" and "certificate_source_type".
-    Also includes a conditional count and an import block snippet.
+    Returns a tuple: (resource_block, import_block)
     """
     lines = []
     lines.append(f'resource "okta_domain" "domain_{domain["id"]}" {{')
@@ -185,14 +165,24 @@ def generate_domain_tf(domain, env):
     lines.append("}")
     resource_block = "\n".join(lines)
     import_block = (
-        f'# Import block for okta_domain.domain_{domain["id"]}\n'
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
         f'  to       = okta_domain.domain_{domain["id"]}[0]\n'
         f'  id       = "{domain["id"]}"\n'
         f'}}\n'
     )
-    return resource_block + "\n\n" + import_block
+    return resource_block, import_block
+
+def generate_app_data_block(app_id, app_label):
+    """
+    Generates a Terraform data block for an okta_app using a search by label.
+    """
+    lines = []
+    lines.append(f'data "okta_app" "app_{app_id}_by_label" {{')
+    lines.append(f'  count = var.CONFIG == "prod" ? 1 : 0')
+    lines.append(f'  label = "{app_label}"')
+    lines.append("}")
+    return "\n".join(lines)
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Terraform configuration from Okta API data")
@@ -200,8 +190,8 @@ def main():
     parser.add_argument("--prod-subdomain", help="Production subdomain", default="prod")
     parser.add_argument("--preview-domain-flag", help="Preview domain flag (e.g., preview)", default="preview")
     parser.add_argument("--prod-domain-flag", help="Production domain flag (e.g., default)", default="default")
-    parser.add_argument("--preview-full-url", help="Preview full URL for Okta API (e.g., https://your-preview-domain)", default="")
-    parser.add_argument("--prod-full-url", help="Production full URL for Okta API (e.g., https://your-prod-domain)", default="")
+    parser.add_argument("--preview-full-url", help="Preview full URL for Okta API", default="")
+    parser.add_argument("--prod-full-url", help="Production full URL for Okta API", default="")
     parser.add_argument("--preview-api-token", help="Preview API token", default="")
     parser.add_argument("--prod-api-token", help="Production API token", default="")
     parser.add_argument("--output-file", help="Output Terraform file", default="output.tf")
@@ -218,24 +208,28 @@ def main():
     else:
         prod_base_url = f"https://{get_okta_domain(args.prod_subdomain, args.prod_domain_flag)}"
 
-    # Start with a locals block for the base URLs.
+    # Build locals block
     tf_content = "# Terraform configuration generated by script\n\n"
     tf_content += "locals {\n"
     tf_content += f'  okta_preview_url = "{preview_base_url}"\n'
     tf_content += f'  okta_prod_url = "{prod_base_url}"\n'
+    tf_content += f'  is_prod = var.CONFIG == "prod"\n'
     tf_content += "}\n\n"
 
-    resource_content = ""
-    # For production, collect unique application IDs and their labels.
+    # Accumulate resource blocks and import blocks separately
+    resource_blocks = []
+    import_blocks = []
+
+    # Collect unique application IDs and labels (for production only)
     prod_app_map = {}  # app_id -> app_label
 
-    # Process both environments.
+    # Process environments: preview and prod
     for env, base_url, token in [
         ("preview", preview_base_url, args.preview_api_token),
         ("prod", prod_base_url, args.prod_api_token)
     ]:
         if token:
-            resource_content += f"# {env.capitalize()} Environment - Brands, Themes, and Domains\n"
+            # Process Brands, Themes, and Domains for each environment
             try:
                 brands = fetch_brands(base_url, token)
             except Exception as e:
@@ -243,7 +237,9 @@ def main():
                 continue
 
             for brand in brands:
-                resource_content += generate_brand_tf(brand, env) + "\n"
+                res, imp = generate_brand_tf(brand, env)
+                resource_blocks.append(f"# {env.capitalize()} Environment - Brand {brand['id']}\n" + res)
+                import_blocks.append(imp)
                 if env == "prod" and "defaultApp" in brand and brand["defaultApp"]:
                     app = brand["defaultApp"]
                     if app.get("appInstanceId"):
@@ -259,20 +255,22 @@ def main():
                     print(f"Error fetching themes for brand {brand['id']} in {env} environment: {e}")
                     themes = []
                 for theme in themes:
-                    resource_content += generate_theme_tf(theme, brand["id"], env) + "\n"
-
-            # Process domains for this environment.
+                    res, imp = generate_theme_tf(theme, brand["id"], env)
+                    resource_blocks.append(f"# {env.capitalize()} Environment - Theme {theme['id']} (Brand {brand['id']})\n" + res)
+                    import_blocks.append(imp)
+            # Process Domains for this environment
             try:
                 domains = fetch_domains(base_url, token)
             except Exception as e:
                 print(f"Error fetching domains for {env} environment: {e}")
                 domains = []
             if domains:
-                resource_content += f"# {env.capitalize()} Environment - Domains\n"
                 for domain in domains:
-                    resource_content += generate_domain_tf(domain, env) + "\n"
+                    res, imp = generate_domain_tf(domain, env)
+                    resource_blocks.append(f"# {env.capitalize()} Environment - Domain {domain['id']}\n" + res)
+                    import_blocks.append(imp)
 
-    # Generate data blocks for Okta applications (production only) using search by label.
+    # Generate data blocks for Okta applications (production only)
     data_blocks = "# Data blocks for Okta Applications (Production only, searched by label)\n\n"
     if args.prod_api_token:
         for app_id, app_label in prod_app_map.items():
@@ -280,9 +278,14 @@ def main():
     else:
         data_blocks += "# No production API token provided for application lookup\n\n"
 
-    tf_content += data_blocks + resource_content
+    # Consolidate final Terraform content
+    tf_content += data_blocks + "\n".join(resource_blocks)
+    tf_content += "\n\n# =====================================================\n"
+    tf_content += "# Consolidated Import Block Section\n"
+    tf_content += "# =====================================================\n\n"
+    tf_content += "\n".join(import_blocks)
 
-    # Write the generated Terraform configuration to the output file.
+    # Write to output file
     with open(args.output_file, "w") as f:
         f.write(tf_content)
     print(f"Terraform configuration written to {args.output_file}")
