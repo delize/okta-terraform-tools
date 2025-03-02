@@ -58,25 +58,21 @@ def normalize_resource_name(label):
 def substitute_member(member, group_map, user_map, app_map=None, okta_domain=""):
     """
     Substitute a member URL with an environment-independent interpolation.
-    Handles trailing segments (e.g. /users) appropriately.
-    Also checks for query filters (e.g. apps?filter=...) and escapes quotes.
+    Handles query filters and trailing segments.
     """
-    # Handle URLs that contain a query filter (e.g. filtering apps by name)
     if "apps?filter" in member:
-        # Replace the Okta domain with the local interpolation and escape double quotes
         new_url = member.replace(f"https://{okta_domain}", "${local.org_url}")
         new_url = new_url.replace('"', '\\"')
         return new_url
 
-    # If the member URL is exactly the base endpoint for groups, users, or apps:
     if member.endswith("/api/v1/groups"):
         return "${local.org_url}/api/v1/groups"
     if member.endswith("/api/v1/users"):
         return "${local.org_url}/api/v1/users"
     if member.endswith("/api/v1/apps"):
         return "${local.org_url}/api/v1/apps"
-    
-    # For groups: capture group id and optional trailing segment (e.g. /users)
+
+    # For groups
     group_pattern = r'/api/v1/groups/([^/]+)(/.*)?$'
     m_group = re.search(group_pattern, member)
     if m_group:
@@ -85,6 +81,7 @@ def substitute_member(member, group_map, user_map, app_map=None, okta_domain="")
         if gid in group_map:
             normalized = group_map[gid]
             return '${local.org_url}/api/v1/groups/${data.okta_group.' + normalized + '.id}' + extra
+
     # For users:
     user_pattern = r'/api/v1/users/([^/]+)$'
     m_user = re.search(user_pattern, member)
@@ -102,8 +99,49 @@ def substitute_member(member, group_map, user_map, app_map=None, okta_domain="")
         if app_map and aid in app_map:
             normalized = app_map[aid]
             return '${local.org_url}/api/v1/apps/${data.okta_app.' + normalized + '.id}' + extra
-    # Otherwise, ensure any double quotes are escaped
     return member.replace('"', '\\"')
+
+# ----- Mapping Builders (using Pandas) -----
+
+def build_group_mapping(groups):
+    df = pd.DataFrame(groups)
+    # Use profile.name if available; else fallback to "name"
+    if "profile" in df.columns:
+        # Some JSON may nest profile as a dict; if so, extract 'name'
+        df["display"] = df["profile"].apply(lambda p: p.get("name") if isinstance(p, dict) and "name" in p else None)
+    elif "name" in df.columns:
+        df["display"] = df["name"]
+    else:
+        df["display"] = df["id"]
+    df["display"] = df["display"].fillna(df["id"])
+    df["normalized"] = df["display"].apply(normalize_resource_name)
+    mapping = { row["id"]: row["normalized"] for _, row in df.iterrows() }
+    return mapping
+
+def build_user_mapping(users):
+    df = pd.DataFrame(users)
+    if "profile" in df.columns:
+        df["display"] = df["profile"].apply(lambda p: p.get("email") if isinstance(p, dict) and "email" in p else None)
+    elif "login" in df.columns:
+        df["display"] = df["login"]
+    else:
+        df["display"] = df["id"]
+    df["display"] = df["display"].fillna(df["id"])
+    df["normalized"] = df["display"].apply(normalize_resource_name)
+    mapping = { row["id"]: row["normalized"] for _, row in df.iterrows() }
+    return mapping
+
+def build_app_mapping(apps):
+    df = pd.DataFrame(apps)
+    if "label" in df.columns:
+        df["display"] = df["label"].fillna(df["id"])
+    elif "name" in df.columns:
+        df["display"] = df["name"].fillna(df["id"])
+    else:
+        df["display"] = df["id"]
+    df["normalized"] = df["display"].apply(normalize_resource_name)
+    mapping = { row["id"]: row["normalized"] for _, row in df.iterrows() }
+    return mapping
 
 # ----- API Data Fetching Functions -----
 
@@ -220,7 +258,6 @@ def fetch_user_roles(okta_domain, user_id, headers):
     return data if data else []
 
 def fetch_apps(okta_domain, headers):
-    """Query the Okta Applications API and return the list of apps."""
     apps = []
     endpoint = f"https://{okta_domain}/api/v1/apps"
     while endpoint:
@@ -251,7 +288,7 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
     else:
         print("No resource sets data available.")
     
-    # Debug IAM Roles with normalized names
+    # Debug IAM Roles
     df_roles = pd.DataFrame(roles)
     if not df_roles.empty:
         df_roles["normalized"] = df_roles["label"].apply(normalize_resource_name)
@@ -266,8 +303,14 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
     groups = fetch_all_groups(okta_domain, headers)
     df_groups = pd.DataFrame(groups)
     if not df_groups.empty:
-        if "profile.name" in df_groups.columns:
-            df_groups.rename(columns={"profile.name": "name"}, inplace=True)
+        if "profile" in df_groups.columns:
+            df_groups["display"] = df_groups["profile"].apply(lambda p: p.get("name") if isinstance(p, dict) and "name" in p else None)
+        elif "name" in df_groups.columns:
+            df_groups["display"] = df_groups["name"]
+        else:
+            df_groups["display"] = df_groups["id"]
+        df_groups["display"] = df_groups["display"].fillna(df_groups["id"])
+        df_groups["normalized"] = df_groups["display"].apply(normalize_resource_name)
         print("Groups DataFrame:")
         print(df_groups.head())
         df_groups.to_csv("debug_groups.csv", index=False)
@@ -279,6 +322,14 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
     users = fetch_all_users(okta_domain, headers)
     df_users = pd.DataFrame(users)
     if not df_users.empty:
+        if "profile" in df_users.columns:
+            df_users["display"] = df_users["profile"].apply(lambda p: p.get("email") if isinstance(p, dict) and "email" in p else None)
+        elif "login" in df_users.columns:
+            df_users["display"] = df_users["login"]
+        else:
+            df_users["display"] = df_users["id"]
+        df_users["display"] = df_users["display"].fillna(df_users["id"])
+        df_users["normalized"] = df_users["display"].apply(normalize_resource_name)
         print("Users DataFrame:")
         print(df_users.head())
         df_users.to_csv("debug_users.csv", index=False)
@@ -290,6 +341,13 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
     apps = fetch_apps(okta_domain, headers)
     df_apps = pd.DataFrame(apps)
     if not df_apps.empty:
+        if "label" in df_apps.columns:
+            df_apps["display"] = df_apps["label"].fillna(df_apps["id"])
+        elif "name" in df_apps.columns:
+            df_apps["display"] = df_apps["name"].fillna(df_apps["id"])
+        else:
+            df_apps["display"] = df_apps["id"]
+        df_apps["normalized"] = df_apps["display"].apply(normalize_resource_name)
         print("Apps DataFrame:")
         print(df_apps.head())
         df_apps.to_csv("debug_apps.csv", index=False)
@@ -297,7 +355,7 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
     else:
         print("No apps data available.")
     
-    # For groups and users, fetch roles
+    # For groups and users, fetch roles.
     group_roles_by_group = {}
     for group in groups:
         gid = group.get("id")
@@ -312,7 +370,7 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
         if assignments:
             user_roles_by_user[uid] = assignments
 
-    # Generate Terraform blocks for group and user roles
+    # Generate Terraform blocks for group and user roles.
     generate_import_blocks_for_group_roles(group_roles_by_group, tf_file)
     generate_terraform_group_roles(group_roles_by_group, tf_file, args.terraform_format, group_map)
     generate_import_blocks_for_user_roles(user_roles_by_user, tf_file)
@@ -320,18 +378,25 @@ def debug_with_pandas(resource_sets, roles, okta_domain, headers, tf_file, args,
 
     return group_roles_by_group, user_roles_by_user
 
-# ----- Generate Data Blocks for Data Sources -----
+# ----- Data Blocks Generators -----
 
 def generate_data_blocks_for_groups(groups, data_tf_file):
     with open(data_tf_file, "w") as f:
         f.write("# Generated Data Blocks for Okta Groups\n\n")
         for group in groups:
             group_id = group.get("id")
-            name = group.get("profile", {}).get("name") or group.get("name") or group_id
-            normalized = normalize_resource_name(name)
+            # Prefer using the group's name from profile if available.
+            if "profile" in group and isinstance(group["profile"], dict) and group["profile"].get("name"):
+                group_name = group["profile"]["name"]
+            elif "name" in group:
+                group_name = group["name"]
+            else:
+                group_name = group_id
+            normalized = normalize_resource_name(group_name)
+            # Use the data source schema with "name" as a filter.
             block = f'''
 data "okta_group" "{normalized}" {{
-  id = "{group_id}"
+  name = "{group_name}"
 }}
 '''
             f.write(block)
@@ -341,11 +406,19 @@ def generate_data_blocks_for_users(users, data_tf_file):
         f.write("\n# Generated Data Blocks for Okta Users\n\n")
         for user in users:
             user_id = user.get("id")
-            key = user.get("email") or user.get("login") or user_id
-            normalized = normalize_resource_name(key)
+            # Use profile.email if available.
+            if "profile" in user and isinstance(user["profile"], dict) and user["profile"].get("email"):
+                user_email = user["profile"]["email"]
+            elif "login" in user:
+                user_email = user["login"]
+            else:
+                user_email = user_id
+            normalized = normalize_resource_name(user_email)
             block = f'''
 data "okta_user" "{normalized}" {{
-  id = "{user_id}"
+  search {{
+    expression = "profile.email eq \\"{user_email}\\""
+  }}
 }}
 '''
             f.write(block)
@@ -505,32 +578,12 @@ import {{
 '''
             f.write(block)
 
-def aggregate_custom_assignments(group_roles_by_group, user_roles_by_user):
-    custom_assignments = {}
-    for group_id, assignments in group_roles_by_group.items():
-        for assignment in assignments:
-            if assignment.get("type") == "CUSTOM":
-                custom_role_id = assignment.get("role")
-                resource_set_id = assignment.get("resource-set")
-                key = (custom_role_id, resource_set_id)
-                member_href = '${{local.org_url}}/api/v1/groups/{}'.format(group_id)
-                custom_assignments.setdefault(key, set()).add(member_href)
-    for user_id, assignments in user_roles_by_user.items():
-        for assignment in assignments:
-            if assignment.get("type") == "CUSTOM":
-                custom_role_id = assignment.get("role")
-                resource_set_id = assignment.get("resource-set")
-                key = (custom_role_id, resource_set_id)
-                member_href = '${{local.org_url}}/api/v1/users/{}'.format(user_id)
-                custom_assignments.setdefault(key, set()).add(member_href)
-    return custom_assignments
-
-def generate_terraform_custom_assignments(custom_assignments, tf_file, terraform_format, group_map, user_map, resource_set_map, custom_role_map):
+def generate_terraform_custom_assignments(custom_assignments, tf_file, terraform_format, group_map, user_map, resource_set_map, custom_role_map, okta_domain):
     with open(tf_file, "a") as f:
         f.write("\n# Terraform configuration for Custom Role Assignments (okta_admin_role_custom_assignments)\n\n")
         for (custom_role_id, resource_set_id), members in custom_assignments.items():
             resource_name = f"ca_{normalize_resource_name(custom_role_id)}_{normalize_resource_name(resource_set_id)}"
-            substituted_members = [substitute_member(m, group_map, user_map) for m in members]
+            substituted_members = [substitute_member(m, group_map, user_map, okta_domain=okta_domain) for m in members]
             members_list = ", ".join([f'"{m}"' for m in substituted_members])
             if resource_set_id in resource_set_map:
                 resource_set_reference = f"okta_resource_set.{resource_set_map[resource_set_id]}.id"
@@ -663,6 +716,26 @@ import {{
 '''
             f.write(block)
 
+def aggregate_custom_assignments(group_roles_by_group, user_roles_by_user):
+    custom_assignments = {}
+    for group_id, assignments in group_roles_by_group.items():
+        for assignment in assignments:
+            if assignment.get("type") == "CUSTOM":
+                custom_role_id = assignment.get("role")
+                resource_set_id = assignment.get("resource-set")
+                key = (custom_role_id, resource_set_id)
+                member_href = '${{local.org_url}}/api/v1/groups/{}'.format(group_id)
+                custom_assignments.setdefault(key, set()).add(member_href)
+    for user_id, assignments in user_roles_by_user.items():
+        for assignment in assignments:
+            if assignment.get("type") == "CUSTOM":
+                custom_role_id = assignment.get("role")
+                resource_set_id = assignment.get("resource-set")
+                key = (custom_role_id, resource_set_id)
+                member_href = '${{local.org_url}}/api/v1/users/{}'.format(user_id)
+                custom_assignments.setdefault(key, set()).add(member_href)
+    return custom_assignments
+
 # ----- Main Function -----
 
 def main():
@@ -709,44 +782,24 @@ locals {
     resource_sets = fetch_resource_sets(okta_domain, headers)
     apps = fetch_apps(okta_domain, headers)
     
-    # Build an app lookup mapping using Pandas.
-    df_apps = pd.DataFrame(apps)
-    if not df_apps.empty and "label" in df_apps.columns:
-        df_apps["normalized"] = df_apps["label"].apply(normalize_resource_name)
-    else:
-        df_apps["normalized"] = df_apps["id"].apply(normalize_resource_name)
-    app_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_apps.iterrows() }
-    
-    # Fetch groups and users.
+    # Build lookup mappings using Pandas.
     groups = fetch_all_groups(okta_domain, headers)
     users = fetch_all_users(okta_domain, headers)
+    group_id_to_normalized = build_group_mapping(groups)
+    user_id_to_normalized = build_user_mapping(users)
+    app_id_to_normalized = build_app_mapping(apps)
     
-    # Build lookup mappings for groups and users using Pandas.
-    df_groups = pd.DataFrame(groups)
-    if not df_groups.empty and "profile.name" in df_groups.columns:
-        df_groups["normalized"] = df_groups["profile.name"].apply(normalize_resource_name)
-    else:
-        df_groups["normalized"] = df_groups["id"].apply(normalize_resource_name)
-    group_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_groups.iterrows() }
-    
-    df_users = pd.DataFrame(users)
-    if not df_users.empty and "email" in df_users.columns:
-        df_users["normalized"] = df_users["email"].apply(normalize_resource_name)
-    else:
-        df_users["normalized"] = df_users["id"].apply(normalize_resource_name)
-    user_id_to_normalized = { row["id"]: row["normalized"] for _, row in df_users.iterrows() }
-    
-    # Export debug CSVs
-    df_apps.to_csv("debug_apps.csv", index=False)
+    # Export debug CSVs.
+    pd.DataFrame(apps).to_csv("debug_apps.csv", index=False)
     print("Apps CSV written to debug_apps.csv")
-    df_groups.to_csv("debug_groups.csv", index=False)
+    pd.DataFrame(groups).to_csv("debug_groups.csv", index=False)
     print("Groups CSV written to debug_groups.csv")
-    df_users.to_csv("debug_users.csv", index=False)
+    pd.DataFrame(users).to_csv("debug_users.csv", index=False)
     print("Users CSV written to debug_users.csv")
     pd.DataFrame(resource_sets).to_csv("debug_resource_sets.csv", index=False)
     print("Resource sets CSV written to debug_resource_sets.csv")
     
-    # Debug with Pandas (passing lookup mappings including apps)
+    # Debug with Pandas.
     group_roles_by_group, user_roles_by_user = debug_with_pandas(
         resource_sets, roles, okta_domain, headers, tf_file, args,
         group_id_to_normalized, user_id_to_normalized, app_id_to_normalized
@@ -773,12 +826,13 @@ locals {
     custom_assignments = aggregate_custom_assignments(group_roles_by_group, user_roles_by_user)
     generate_import_blocks_for_custom_assignments(custom_assignments, tf_file)
     generate_terraform_custom_assignments(custom_assignments, tf_file, args.terraform_format,
-                                          group_id_to_normalized, user_id_to_normalized, resource_set_map, custom_role_map)
+                                          group_id_to_normalized, user_id_to_normalized,
+                                          resource_set_map, custom_role_map, okta_domain)
     
     # Generate main IAM role and resource set blocks.
     generate_terraform_roles(roles, tf_file, args.terraform_format, okta_domain, headers)
-    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format, okta_domain, headers,
-                                     group_id_to_normalized, user_id_to_normalized, app_id_to_normalized)
+    generate_terraform_resource_sets(resource_sets, tf_file, args.terraform_format,
+                                     okta_domain, headers, group_id_to_normalized, user_id_to_normalized, app_id_to_normalized)
     
     # Generate user admin roles using interpolation.
     generate_terraform_user_roles(user_roles_by_user, tf_file, args.terraform_format, user_id_to_normalized)
