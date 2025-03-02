@@ -29,11 +29,11 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Generate environment-agnostic Terraform .tf for Okta with valid import blocks (Terraform 1.5+)."
     )
-    parser.add_argument("--subdomain", help="Okta subdomain (e.g. eqtpartners).")
+    parser.add_argument("--subdomain", help="Okta subdomain (e.g. mydomain).")
     parser.add_argument("--domain", default="default",
                         help="Domain: 'default' -> okta.com, 'emea' -> okta-emea.com, etc.")
     parser.add_argument("--org-url",
-                        help="Full Okta Org URL (e.g. https://eqtpartners.okta-emea.com). Overrides --subdomain/--domain.")
+                        help="Full Okta Org URL (e.g. https://mydomain.okta-emea.com). Overrides --subdomain/--domain.")
     parser.add_argument("--api-token", required=True, help="Okta API Token (SSWS).")
     parser.add_argument("--group-prefix",
                         help="If provided, only groups whose name starts with this prefix (e.g. 'okta_admin_').")
