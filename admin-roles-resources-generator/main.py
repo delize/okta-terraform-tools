@@ -740,7 +740,7 @@ def aggregate_custom_assignments(group_roles_by_group, user_roles_by_user):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Terraform config from Okta API data.")
-    parser.add_argument("--subdomain", required=True, help="Okta subdomain (e.g. eqtpartners)")
+    parser.add_argument("--subdomain", required=True, help="Okta subdomain (e.g. mydomain)")
     parser.add_argument("--domain-flag", choices=["default", "emea", "preview", "gov", "mil"], default="default",
                         help="Domain flag to determine the Okta domain suffix")
     parser.add_argument("--api-token", help="Okta API token", required=True)
