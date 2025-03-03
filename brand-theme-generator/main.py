@@ -76,32 +76,33 @@ def generate_brand_tf(brand, env):
     """
     Generates a Terraform resource block for an okta_brand.
     Returns a tuple: (resource_block, import_block)
+    The resource name is suffixed with the environment.
     """
-    lines = []
-    lines.append(f'resource "okta_brand" "brand_{brand["id"]}" {{')
-    lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
-    lines.append(f'  name = "{brand["name"]}"')
-    lines.append(f'  remove_powered_by_okta = {str(brand["removePoweredByOkta"]).lower()}')
+    res_lines = []
+    res_lines.append(f'resource "okta_brand" "brand_{brand["id"]}_{env}" {{')
+    res_lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
+    res_lines.append(f'  name = "{brand["name"]}"')
+    res_lines.append(f'  remove_powered_by_okta = {str(brand["removePoweredByOkta"]).lower()}')
     if brand.get("customPrivacyPolicyUrl") is not None:
-        lines.append(f'  custom_privacy_policy_url = "{brand["customPrivacyPolicyUrl"]}"')
-    lines.append(f'  agree_to_custom_privacy_policy = {str(brand["agreeToCustomPrivacyPolicy"]).lower()}')
+        res_lines.append(f'  custom_privacy_policy_url = "{brand["customPrivacyPolicyUrl"]}"')
+    res_lines.append(f'  agree_to_custom_privacy_policy = {str(brand["agreeToCustomPrivacyPolicy"]).lower()}')
     if "defaultApp" in brand and brand["defaultApp"]:
         app = brand["defaultApp"]
         if app.get("appInstanceId"):
             if env == "prod":
-                lines.append(f'  default_app_app_instance_id = data.okta_app.app_{app["appInstanceId"]}_by_label[0].id')
+                res_lines.append(f'  default_app_app_instance_id = data.okta_app.app_{app["appInstanceId"]}_by_label[0].id')
             else:
-                lines.append(f'  # default_app_app_instance_id omitted for preview environment')
+                res_lines.append(f'  # default_app_app_instance_id omitted for preview environment')
         if app.get("appLinkName"):
-            lines.append(f'  default_app_app_link_name = "{app["appLinkName"]}"')
+            res_lines.append(f'  default_app_app_link_name = "{app["appLinkName"]}"')
         if app.get("classicApplicationUri"):
-            lines.append(f'  default_app_classic_application_uri = "{app["classicApplicationUri"]}"')
-    lines.append("}")
-    resource_block = "\n".join(lines)
+            res_lines.append(f'  default_app_classic_application_uri = "{app["classicApplicationUri"]}"')
+    res_lines.append("}")
+    resource_block = "\n".join(res_lines)
     import_block = (
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
-        f'  to       = okta_brand.brand_{brand["id"]}[0]\n'
+        f'  to       = okta_brand.brand_{brand["id"]}_{env}[0]\n'
         f'  id       = "{brand["id"]}"\n'
         f'}}\n'
     )
@@ -111,39 +112,41 @@ def generate_theme_tf(theme, brand_id, env):
     """
     Generates a Terraform resource block for an okta_theme.
     Returns a tuple: (resource_block, import_block)
+    The resource name is suffixed with the environment, and the brand reference is updated accordingly.
     """
-    lines = []
-    lines.append(f'resource "okta_theme" "theme_{theme["id"]}" {{')
-    lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
-    lines.append(f'  brand_id = okta_brand.brand_{brand_id}.id')
+    res_lines = []
+    res_lines.append(f'resource "okta_theme" "theme_{theme["id"]}_{env}" {{')
+    res_lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
+    # Note the index [0] for the referenced brand resource.
+    res_lines.append(f'  brand_id = okta_brand.brand_{brand_id}_{env}[0].id')
     if theme.get("logo"):
-        lines.append(f'  logo = "{theme["logo"]}"')
+        res_lines.append(f'  logo = "{theme["logo"]}"')
     if theme.get("favicon"):
-        lines.append(f'  favicon = "{theme["favicon"]}"')
+        res_lines.append(f'  favicon = "{theme["favicon"]}"')
     if theme.get("backgroundImage"):
-        lines.append(f'  background_image = "{theme["backgroundImage"]}"')
+        res_lines.append(f'  background_image = "{theme["backgroundImage"]}"')
     if theme.get("primaryColorHex"):
-        lines.append(f'  primary_color_hex = "{theme["primaryColorHex"]}"')
+        res_lines.append(f'  primary_color_hex = "{theme["primaryColorHex"]}"')
     if theme.get("primaryColorContrastHex"):
-        lines.append(f'  primary_color_contrast_hex = "{theme["primaryColorContrastHex"]}"')
+        res_lines.append(f'  primary_color_contrast_hex = "{theme["primaryColorContrastHex"]}"')
     if theme.get("secondaryColorHex"):
-        lines.append(f'  secondary_color_hex = "{theme["secondaryColorHex"]}"')
+        res_lines.append(f'  secondary_color_hex = "{theme["secondaryColorHex"]}"')
     if theme.get("secondaryColorContrastHex"):
-        lines.append(f'  secondary_color_contrast_hex = "{theme["secondaryColorContrastHex"]}"')
+        res_lines.append(f'  secondary_color_contrast_hex = "{theme["secondaryColorContrastHex"]}"')
     if theme.get("signInPageTouchPointVariant"):
-        lines.append(f'  sign_in_page_touch_point_variant = "{theme["signInPageTouchPointVariant"]}"')
+        res_lines.append(f'  sign_in_page_touch_point_variant = "{theme["signInPageTouchPointVariant"]}"')
     if theme.get("endUserDashboardTouchPointVariant"):
-        lines.append(f'  end_user_dashboard_touch_point_variant = "{theme["endUserDashboardTouchPointVariant"]}"')
+        res_lines.append(f'  end_user_dashboard_touch_point_variant = "{theme["endUserDashboardTouchPointVariant"]}"')
     if theme.get("errorPageTouchPointVariant"):
-        lines.append(f'  error_page_touch_point_variant = "{theme["errorPageTouchPointVariant"]}"')
+        res_lines.append(f'  error_page_touch_point_variant = "{theme["errorPageTouchPointVariant"]}"')
     if theme.get("emailTemplateTouchPointVariant"):
-        lines.append(f'  email_template_touch_point_variant = "{theme["emailTemplateTouchPointVariant"]}"')
-    lines.append("}")
-    resource_block = "\n".join(lines)
+        res_lines.append(f'  email_template_touch_point_variant = "{theme["emailTemplateTouchPointVariant"]}"')
+    res_lines.append("}")
+    resource_block = "\n".join(res_lines)
     import_block = (
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
-        f'  to       = okta_theme.theme_{theme["id"]}[0]\n'
+        f'  to       = okta_theme.theme_{theme["id"]}_{env}[0]\n'
         f'  id       = "{theme["id"]}"\n'
         f'}}\n'
     )
@@ -153,21 +156,22 @@ def generate_domain_tf(domain, env):
     """
     Generates a Terraform resource block for an okta_domain.
     Returns a tuple: (resource_block, import_block)
+    The resource name is suffixed with the environment.
     """
-    lines = []
-    lines.append(f'resource "okta_domain" "domain_{domain["id"]}" {{')
-    lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
-    lines.append(f'  name = "{domain["domain"]}"')
+    res_lines = []
+    res_lines.append(f'resource "okta_domain" "domain_{domain["id"]}_{env}" {{')
+    res_lines.append(f'  count = var.CONFIG == "{env}" ? 1 : 0')
+    res_lines.append(f'  name = "{domain["domain"]}"')
     if domain.get("brandId"):
-        lines.append(f'  brand_id = "{domain["brandId"]}"')
+        res_lines.append(f'  brand_id = "{domain["brandId"]}"')
     if domain.get("certificateSourceType"):
-        lines.append(f'  certificate_source_type = "{domain["certificateSourceType"]}"')
-    lines.append("}")
-    resource_block = "\n".join(lines)
+        res_lines.append(f'  certificate_source_type = "{domain["certificateSourceType"]}"')
+    res_lines.append("}")
+    resource_block = "\n".join(res_lines)
     import_block = (
         f'import {{\n'
         f'  for_each = var.CONFIG == "{env}" ? toset(["{env}"]) : []\n'
-        f'  to       = okta_domain.domain_{domain["id"]}[0]\n'
+        f'  to       = okta_domain.domain_{domain["id"]}_{env}[0]\n'
         f'  id       = "{domain["id"]}"\n'
         f'}}\n'
     )
@@ -176,6 +180,7 @@ def generate_domain_tf(domain, env):
 def generate_app_data_block(app_id, app_label):
     """
     Generates a Terraform data block for an okta_app using a search by label.
+    (This block is production-only.)
     """
     lines = []
     lines.append(f'data "okta_app" "app_{app_id}_by_label" {{')
@@ -198,7 +203,6 @@ def main():
     parser.add_argument("--terraform-fmt", action="store_true", help="Run 'terraform fmt' on the generated file")
     args = parser.parse_args()
 
-    # Determine base URLs for preview and production
     if args.preview_full_url:
         preview_base_url = args.preview_full_url.rstrip("/")
     else:
@@ -208,28 +212,23 @@ def main():
     else:
         prod_base_url = f"https://{get_okta_domain(args.prod_subdomain, args.prod_domain_flag)}"
 
-    # Build locals block
     tf_content = "# Terraform configuration generated by script\n\n"
     tf_content += "locals {\n"
     tf_content += f'  okta_preview_url = "{preview_base_url}"\n'
     tf_content += f'  okta_prod_url = "{prod_base_url}"\n'
-    tf_content += f'  is_prod = var.CONFIG == "prod"\n'
+    tf_content += '  is_prod = var.CONFIG == "prod"\n'
     tf_content += "}\n\n"
 
-    # Accumulate resource blocks and import blocks separately
     resource_blocks = []
     import_blocks = []
-
-    # Collect unique application IDs and labels (for production only)
     prod_app_map = {}  # app_id -> app_label
 
-    # Process environments: preview and prod
+    # Process both environments: preview and prod.
     for env, base_url, token in [
         ("preview", preview_base_url, args.preview_api_token),
         ("prod", prod_base_url, args.prod_api_token)
     ]:
         if token:
-            # Process Brands, Themes, and Domains for each environment
             try:
                 brands = fetch_brands(base_url, token)
             except Exception as e:
@@ -258,7 +257,7 @@ def main():
                     res, imp = generate_theme_tf(theme, brand["id"], env)
                     resource_blocks.append(f"# {env.capitalize()} Environment - Theme {theme['id']} (Brand {brand['id']})\n" + res)
                     import_blocks.append(imp)
-            # Process Domains for this environment
+
             try:
                 domains = fetch_domains(base_url, token)
             except Exception as e:
@@ -270,7 +269,6 @@ def main():
                     resource_blocks.append(f"# {env.capitalize()} Environment - Domain {domain['id']}\n" + res)
                     import_blocks.append(imp)
 
-    # Generate data blocks for Okta applications (production only)
     data_blocks = "# Data blocks for Okta Applications (Production only, searched by label)\n\n"
     if args.prod_api_token:
         for app_id, app_label in prod_app_map.items():
@@ -278,19 +276,16 @@ def main():
     else:
         data_blocks += "# No production API token provided for application lookup\n\n"
 
-    # Consolidate final Terraform content
     tf_content += data_blocks + "\n".join(resource_blocks)
     tf_content += "\n\n# =====================================================\n"
     tf_content += "# Consolidated Import Block Section\n"
     tf_content += "# =====================================================\n\n"
     tf_content += "\n".join(import_blocks)
 
-    # Write to output file
     with open(args.output_file, "w") as f:
         f.write(tf_content)
     print(f"Terraform configuration written to {args.output_file}")
 
-    # Optionally run terraform fmt if requested.
     if args.terraform_fmt:
         try:
             subprocess.run(["terraform", "fmt", args.output_file], check=True)
