@@ -182,3 +182,119 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 
 - **Usage Message Only:**  
   *Prints usage for generating move blocks:*
+
+Usage: python generate_move_blocks.py input_file output_file
+
+---
+
+## Policy Auth Signon Generator (Dual Env)
+
+- **--dual**  
+*Generate files for both preview (test) and production (prod) environments.*
+
+- **--api-token**  
+*API token for single environment mode. Ignored in dual mode.*
+
+- **--full-url**  
+*Full base URL for the Okta API (single environment).*
+
+- **--subdomain**  
+*Your Okta subdomain for single environment (ignored if --full-url is provided).*
+
+- **--domain-flag**  
+*Base domain flag for single environment (default: "default"). Options: default, emea, preview, gov, mil. Ignored if --full-url is provided.*
+
+- **--preview-full-url**  
+*Full base URL for the preview Okta API (dual mode).*
+
+- **--preview-subdomain**  
+*Preview Okta subdomain (dual mode).*
+
+- **--preview-domain-flag**  
+*Domain flag for preview environment (default: "preview").*
+
+- **--preview-api-token**  
+*API token for the preview environment. If not provided, will look for OKTA_PREVIEW_API_TOKEN in the environment.*
+
+- **--prod-full-url**  
+*Full base URL for the production Okta API (dual mode).*
+
+- **--prod-subdomain**  
+*Production Okta subdomain (dual mode).*
+
+- **--prod-domain-flag**  
+*Domain flag for production environment (default: "default").*
+
+- **--prod-api-token**  
+*API token for the production environment. If not provided, will look for OKTA_PROD_API_TOKEN in the environment.*
+
+- **--test**  
+*Run in test mode using local JSON files for policies and rules.*
+
+- **--fmt**  
+*Run `terraform fmt` on the generated Terraform files after generation.*
+
+---
+
+## Policy Auth Generator (Single Env)
+
+- **--api-token**  
+*Your Okta API token. If not provided, the script will try to read the OKTA_API_TOKEN environment variable.*
+
+- **--subdomain**  
+*Your Okta subdomain (e.g., "dev-12345"). Ignored if --full-url is provided.*
+
+- **--domain-flag**  
+*Specify the base domain flag (default: "default"). Options: default, emea, preview, gov, mil. Ignored if --full-url is provided.*
+
+- **--full-url**  
+*Full base URL for the Okta API. If provided, --subdomain and --domain-flag are ignored.*
+
+- **--test**  
+*Run in test mode using local JSON files for policies and rules.*
+
+---
+
+## Policy MFA ENroll Generator
+
+- **--subdomain**  
+*Subdomain for the Okta domain.*
+
+- **--domain**  
+*Domain for the Okta domain.*
+
+- **--full-domain**  
+*Full domain for the Okta domain (without protocol).*
+
+- **--api-token** (required)  
+*Okta API token (without the "SSWS " prefix).*
+
+- **--output** (required)  
+*Output file name for the Terraform configuration (e.g., "./policy-password.tf").*
+
+- **--terraform-fmt**  
+*Run `terraform fmt` on the generated file after generation.*
+
+---
+
+## Policy Password Generator
+
+- **--full-domain** (mutually exclusive with --subdomain)  
+*Your full Okta domain (e.g., "andrewdoering.okta.com").*
+
+- **--subdomain** (if --full-domain not provided)  
+*Your Okta subdomain (e.g., "andrewdoering"). Use with --domain.*
+
+- **--domain**  
+*Your Okta domain (e.g., "okta.com"). Required if --subdomain is provided.*
+
+- **--api-token** (required)  
+*Okta API token (without the "SSWS " prefix).*
+
+- **--output** (required)  
+*Output Terraform file path (e.g., "./policy-password.tf").*
+
+- **--terraform-fmt**  
+*Run `terraform fmt` on the generated file after generation.*
+
+---
