@@ -8,23 +8,16 @@ import re
 
 def normalize_name(name):
     """
-    Normalize a string to be used as a Terraform resource name:
+    Normalize a string to be used as part of a Terraform resource name:
     - Convert to lowercase.
     - Replace non-alphanumeric characters with underscores.
     - Collapse multiple underscores into one.
-    - Ensure it does not start with a digit.
+    - Remove leading/trailing underscores.
     """
     name = name.lower()
-    # Replace any non-alphanumeric characters with underscore
     name = re.sub(r'[^a-z0-9]', '_', name)
-    # Collapse multiple underscores into one
     name = re.sub(r'_+', '_', name)
-    # Remove leading/trailing underscores
-    name = name.strip('_')
-    # Prepend underscore if it starts with a digit or is empty
-    if not name or name[0].isdigit():
-        name = "_" + name
-    return name
+    return name.strip('_')
 
 def build_okta_url(subdomain, domain, endpoint):
     """Construct the full Okta API URL."""
@@ -79,15 +72,16 @@ def generate_policy_block(policy, global_groups):
     Generate the Terraform resource block for a password policy.
     Uses okta_policy_password_default if policy["system"] is true;
     otherwise, uses okta_policy_password.
-    Returns the resource block string, resource type, and normalized resource name.
+    Returns the resource block string, resource type, and combined resource name in the format name_id.
     
     Also updates global_groups (a set) with any group IDs found in groups_included.
     """
-    # Use the normalized name from the policy name (fallback to ID if needed)
-    normalized_name = normalize_name(policy.get("name", policy["id"]))
+    base_name = normalize_name(policy.get("name", policy["id"]))
+    normalized_id = policy["id"].replace("-", "_")
+    resource_name = f"{base_name}_{normalized_id}"
     resource_type = "okta_policy_password_default" if policy.get("system", False) else "okta_policy_password"
 
-    lines = [f'resource "{resource_type}" "{normalized_name}" {{']
+    lines = [f'resource "{resource_type}" "{resource_name}" {{']
     lines.append(f'  name        = {tf_value(policy.get("name"), True)}')
     lines.append(f'  description = {tf_value(policy.get("description"), True)}')
     lines.append(f'  status      = {tf_value(policy.get("status"), True)}')
@@ -99,7 +93,6 @@ def generate_policy_block(policy, global_groups):
         ref_list = []
         for group in groups:
             global_groups.add(group)
-            # Create a reference in the form data.okta_group.group_<group_id>.id
             ref_list.append(f"data.okta_group.group_{group}.id")
         groups_str = ", ".join(ref_list)
         lines.append(f'  groups_included = [{groups_str}]')
@@ -129,18 +122,20 @@ def generate_policy_block(policy, global_groups):
         token = safe_get(policy, ["settings", "recovery", "factors", "okta_email", "properties", "recoveryToken", "tokenLifetimeMinutes"])
         lines.append(f'  recovery_email_token = {tf_value(token)}')
     lines.append("}")
-    return "\n".join(lines), resource_type, normalized_name
+    return "\n".join(lines), resource_type, resource_name
 
 def generate_rule_block(rule, parent_resource_type, parent_resource_name):
     """
     Generate the Terraform resource block for a password policy rule
     using okta_policy_rule_password.
     The parent's ID is referenced via interpolation.
+    The resource name is in the format name_id.
     """
-    normalized_name = normalize_name(rule.get("name", rule["id"]))
-    lines = [f'resource "okta_policy_rule_password" "{normalized_name}" {{']
+    base_name = normalize_name(rule.get("name", rule["id"]))
+    normalized_id = rule["id"].replace("-", "_")
+    resource_name = f"{base_name}_{normalized_id}"
+    lines = [f'resource "okta_policy_rule_password" "{resource_name}" {{']
     lines.append(f'  name      = {tf_value(rule.get("name"), True)}')
-    # Reference the parent using interpolation.
     lines.append(f'  policy_id = {parent_resource_type}.{parent_resource_name}.id')
     lines.append(f'  priority  = {tf_value(rule.get("priority"))}')
     lines.append(f'  status    = {tf_value(rule.get("status"), True)}')
@@ -169,6 +164,7 @@ def generate_import_block(resource_type, resource_name, resource_id):
       to = resource_type.resource_name
       id = "resource_id"
     }
+    Uses the combined resource name (name_id).
     """
     lines = [
         "import {",
@@ -248,9 +244,7 @@ def main():
         print("Error fetching policies:", e)
         sys.exit(1)
 
-    # Use a set to collect all group IDs from policies.
     global_group_ids = set()
-
     import_blocks = []
     resource_blocks = []
 
@@ -258,7 +252,6 @@ def main():
         if policy.get("type") != "PASSWORD":
             continue
         policy_id = policy.get("id")
-        # Generate policy resource block and update global_group_ids.
         policy_block, policy_resource_type, policy_resource_name = generate_policy_block(policy, global_group_ids)
         import_blocks.append(generate_import_block(policy_resource_type, policy_resource_name, policy_id))
         resource_blocks.append(policy_block)
@@ -270,17 +263,18 @@ def main():
             rules = []
         for rule in rules:
             rule_id = rule.get("id")
-            rule_resource_name = normalize_name(rule.get("name", rule_id))
-            import_blocks.append(generate_import_block("okta_policy_rule_password", rule_resource_name, rule_id))
             rule_block = generate_rule_block(rule, policy_resource_type, policy_resource_name)
+            # Create a combined name for the rule resource in the format name_id
+            base_name = normalize_name(rule.get("name", rule_id))
+            normalized_rule_id = rule_id.replace("-", "_")
+            combined_rule_name = f"{base_name}_{normalized_rule_id}"
+            import_blocks.append(generate_import_block("okta_policy_rule_password", combined_rule_name, rule_id))
             resource_blocks.append(rule_block)
 
-    # Generate data blocks for groups.
     data_blocks = []
     for group_id in sorted(global_group_ids):
         data_blocks.append(generate_data_block_for_group(group_id))
 
-    # Combine data blocks first, then import blocks, then resource blocks.
     full_tf_config = "\n\n".join(data_blocks) + "\n\n" + "\n\n".join(import_blocks) + "\n\n" + "\n\n".join(resource_blocks)
     with open(args.output, "w") as f:
         f.write(full_tf_config)
