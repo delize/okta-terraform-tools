@@ -26,8 +26,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 (If a requirements.txt file is not provided, the tools primarily use the standard libraries along with requests.)
-
-# pre-commit scripts for git
+3. Run `python main.py --help` to determine your next steps
 
 # Pre-commit Hooks Summary
 
