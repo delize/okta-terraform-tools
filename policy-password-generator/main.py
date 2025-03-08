@@ -4,6 +4,27 @@ import json
 import argparse
 import sys
 import subprocess
+import re
+
+def normalize_name(name):
+    """
+    Normalize a string to be used as a Terraform resource name:
+    - Convert to lowercase.
+    - Replace non-alphanumeric characters with underscores.
+    - Collapse multiple underscores into one.
+    - Ensure it does not start with a digit.
+    """
+    name = name.lower()
+    # Replace any non-alphanumeric characters with underscore
+    name = re.sub(r'[^a-z0-9]', '_', name)
+    # Collapse multiple underscores into one
+    name = re.sub(r'_+', '_', name)
+    # Remove leading/trailing underscores
+    name = name.strip('_')
+    # Prepend underscore if it starts with a digit or is empty
+    if not name or name[0].isdigit():
+        name = "_" + name
+    return name
 
 def build_okta_url(subdomain, domain, endpoint):
     """Construct the full Okta API URL."""
@@ -58,14 +79,15 @@ def generate_policy_block(policy, global_groups):
     Generate the Terraform resource block for a password policy.
     Uses okta_policy_password_default if policy["system"] is true;
     otherwise, uses okta_policy_password.
-    Returns the resource block string, resource type, and resource name.
+    Returns the resource block string, resource type, and normalized resource name.
     
     Also updates global_groups (a set) with any group IDs found in groups_included.
     """
-    resource_name = policy["id"].replace("-", "_")
+    # Use the normalized name from the policy name (fallback to ID if needed)
+    normalized_name = normalize_name(policy.get("name", policy["id"]))
     resource_type = "okta_policy_password_default" if policy.get("system", False) else "okta_policy_password"
 
-    lines = [f'resource "{resource_type}" "{resource_name}" {{']
+    lines = [f'resource "{resource_type}" "{normalized_name}" {{']
     lines.append(f'  name        = {tf_value(policy.get("name"), True)}')
     lines.append(f'  description = {tf_value(policy.get("description"), True)}')
     lines.append(f'  status      = {tf_value(policy.get("status"), True)}')
@@ -107,7 +129,7 @@ def generate_policy_block(policy, global_groups):
         token = safe_get(policy, ["settings", "recovery", "factors", "okta_email", "properties", "recoveryToken", "tokenLifetimeMinutes"])
         lines.append(f'  recovery_email_token = {tf_value(token)}')
     lines.append("}")
-    return "\n".join(lines), resource_type, resource_name
+    return "\n".join(lines), resource_type, normalized_name
 
 def generate_rule_block(rule, parent_resource_type, parent_resource_name):
     """
@@ -115,8 +137,8 @@ def generate_rule_block(rule, parent_resource_type, parent_resource_name):
     using okta_policy_rule_password.
     The parent's ID is referenced via interpolation.
     """
-    resource_name = rule["id"].replace("-", "_")
-    lines = [f'resource "okta_policy_rule_password" "{resource_name}" {{']
+    normalized_name = normalize_name(rule.get("name", rule["id"]))
+    lines = [f'resource "okta_policy_rule_password" "{normalized_name}" {{']
     lines.append(f'  name      = {tf_value(rule.get("name"), True)}')
     # Reference the parent using interpolation.
     lines.append(f'  policy_id = {parent_resource_type}.{parent_resource_name}.id')
@@ -248,7 +270,7 @@ def main():
             rules = []
         for rule in rules:
             rule_id = rule.get("id")
-            rule_resource_name = rule_id.replace("-", "_")
+            rule_resource_name = normalize_name(rule.get("name", rule_id))
             import_blocks.append(generate_import_block("okta_policy_rule_password", rule_resource_name, rule_id))
             rule_block = generate_rule_block(rule, policy_resource_type, policy_resource_name)
             resource_blocks.append(rule_block)
