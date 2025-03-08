@@ -66,15 +66,16 @@ def generate_terraform_from_policy(policy, is_oie_flag):
     """
     Generate a Terraform resource block from a single policy.
     
-    - For non-default policies (system is false), generate an okta_policy_mfa resource
-      including the name, description, status, priority, groups_included and factor/authenticator settings.
+    - For non-default policies (system is false), generate an okta_policy_mfa resource.
     - For default policies (system is true), generate an okta_policy_mfa_default resource.
     
-    The API’s provided priority is used directly (or null if missing).
+    Returns a tuple:
+      (resource_block, resource_type, resource_name, resource_id)
     """
     is_default = policy.get("system", False)
     priority = policy.get("priority")
     priority_str = str(priority) if priority is not None else "null"
+    policy_id = policy.get("id", "")
     
     if not is_default:
         name = policy.get("name", "Unnamed_Policy")
@@ -104,7 +105,7 @@ def generate_terraform_from_policy(policy, is_oie_flag):
   is_oie          = {str(is_oie_flag).lower()}
   groups_included = {groups_str}
 {terraform_settings}}}'''
-        return resource_block, resource_name, policy.get("id", "")
+        resource_type = "okta_policy_mfa"
     else:
         # For default policies, use the okta_policy_mfa_default resource.
         settings = policy.get("settings", {})
@@ -123,19 +124,21 @@ def generate_terraform_from_policy(policy, is_oie_flag):
         resource_block = f'''resource "okta_policy_mfa_default" "{resource_name}" {{
   is_oie = {str(is_oie_flag).lower()}
 {terraform_settings}}}'''
-        return resource_block, resource_name, policy.get("id", "")
+        resource_type = "okta_policy_mfa_default"
+    
+    return resource_block, resource_type, resource_name, policy_id
 
 def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_flag):
     """
     Generate a Terraform resource block for a rule.
     
-    For OIE (idx) organizations, generate an okta_policy_rule_mfa resource using the new schema:
-      - Required fields: name, enroll, network_connection, policy_id, priority, status, users_excluded.
-      - Optionally, network_excludes and network_includes are output via jsonencode() if present.
+    For OIE organizations, generate an okta_policy_rule_mfa resource using the new schema.
+    For Classic organizations, generate an okta_policy_mfa_rule resource using inline JSON.
     
-    For Classic organizations, fallback to generating an okta_policy_mfa_rule resource that
-    outputs inline JSON for conditions and actions.
+    Returns a tuple:
+      (resource_block, resource_type, resource_name, rule_id)
     """
+    rule_id = rule.get("id", "")
     if is_oie_flag:
         rule_name = rule.get("name", "unnamed_rule")
         enroll = rule.get("actions", {}).get("enroll", {}).get("self", "null")
@@ -162,7 +165,7 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_f
   status    = "{status}"
   users_excluded = {users_excluded_str}
 }}'''
-        return resource_block
+        resource_type = "okta_policy_rule_mfa"
     else:
         rule_name = rule.get("name", "unnamed_rule")
         status = rule.get("status", "ACTIVE")
@@ -181,28 +184,46 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_f
   conditions = {conditions_str}
   actions    = {actions_str}
 }}'''
-        return resource_block
+        resource_type = "okta_policy_mfa_rule"
+    
+    return resource_block, resource_type, rule_resource_name_final, rule_id
 
 def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
     """
     Generate the complete Terraform configuration content.
-    
-    For each policy, generate its resource block.
-    Then fetch and generate the associated rule resource blocks regardless of whether the policy is default.
+    For each policy and its rules, collect the resource blocks and also structured import info.
+    At the top, output import blocks in HCL syntax.
     """
-    blocks = []
+    resource_blocks = []
+    import_blocks = []
+    
     for policy in policies:
-        policy_block, policy_resource_name, policy_id = generate_terraform_from_policy(policy, is_oie_flag)
-        blocks.append(policy_block)
+        pol_block, pol_type, pol_name, pol_id = generate_terraform_from_policy(policy, is_oie_flag)
+        resource_blocks.append(pol_block)
+        # Generate the import block for the policy:
+        import_blocks.append(f'''import {{
+  to = {pol_type}.{pol_name}
+  id = "{pol_id}"
+}}''')
+        
         try:
-            rules = fetch_rules(okta_domain, policy_id, api_token)
+            rules = fetch_rules(okta_domain, pol_id, api_token)
         except requests.RequestException as err:
-            print(f"Failed to fetch rules for policy {policy_id}: {err}")
+            print(f"Failed to fetch rules for policy {pol_id}: {err}")
             continue
+        
         for rule in rules:
-            rule_block = generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_flag)
-            blocks.append(rule_block)
-    return "\n\n".join(blocks)
+            rule_block, rule_type, rule_name, rule_id = generate_terraform_from_rule(rule, pol_id, pol_name, is_oie_flag)
+            resource_blocks.append(rule_block)
+            import_blocks.append(f'''import {{
+  to = {rule_type}.{rule_name}
+  id = "{pol_id}/{rule_id}"
+}}''')
+    
+    import_section = "\n\n".join(import_blocks)
+    resources_section = "\n\n".join(resource_blocks)
+    full_content = import_section + "\n\n\n" + resources_section
+    return full_content
 
 def run_terraform_fmt(file_path):
     """
