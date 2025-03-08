@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import json
 import subprocess
@@ -62,7 +63,34 @@ def fetch_rules(okta_domain, policy_id, api_token):
     response.raise_for_status()
     return response.json()
 
-def generate_terraform_from_policy(policy, is_oie_flag):
+def tf_value(val, is_string=False):
+    """
+    Convert a Python value to a Terraform literal.
+    - If val is None, return 'null'.
+    - Booleans become 'true' or 'false'.
+    - Numbers are left as is.
+    - Strings are enclosed in quotes.
+    """
+    if val is None:
+        return "null"
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, (int, float)):
+        return str(val)
+    return f'"{val}"'
+
+def safe_get(d, keys):
+    """Retrieve nested value from dict 'd' using a list of keys."""
+    for key in keys:
+        if isinstance(d, dict):
+            d = d.get(key)
+        else:
+            return None
+        if d is None:
+            return None
+    return d
+
+def generate_terraform_from_policy(policy, is_oie_flag, global_groups):
     """
     Generate a Terraform resource block from a single policy.
     
@@ -82,7 +110,11 @@ def generate_terraform_from_policy(policy, is_oie_flag):
         description = policy.get("description", "")
         status = policy.get("status", "ACTIVE")
         groups = policy.get("conditions", {}).get("people", {}).get("groups", {}).get("include", [])
-        groups_str = "[" + ", ".join(f'"{g}"' for g in groups) + "]"
+        if groups and isinstance(groups, list):
+            global_groups.update(groups)
+            groups_str = "[" + ", ".join(f"data.okta_group.group_{g}.id" for g in groups) + "]"
+        else:
+            groups_str = "null"
         
         terraform_settings = ""
         settings = policy.get("settings", {})
@@ -107,7 +139,6 @@ def generate_terraform_from_policy(policy, is_oie_flag):
 {terraform_settings}}}'''
         resource_type = "okta_policy_mfa"
     else:
-        # For default policies, use the okta_policy_mfa_default resource.
         settings = policy.get("settings", {})
         terraform_settings = ""
         if "authenticators" in settings:
@@ -158,8 +189,11 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
         users_excluded_str = f'jsonencode({json.dumps(users_excluded)})' if users_excluded else "null"
         
         rule_resource_name_final = f"{policy_resource_name}_{rule_name.replace(' ', '_').lower()}"
+        # Use interpolation for the parent's policy id.
+        # For example, this outputs: okta_policy_mfa.passwordless_requirement.id
+        rule_policy_id = f"{policy_resource_type}.{policy_resource_name}.id"
         resource_block = f'''resource "okta_policy_rule_mfa" "{rule_resource_name_final}" {{
-  policy_id = "{policy_id}"
+  policy_id = {rule_policy_id}
   name      = "{rule_name}"
   enroll    = "{enroll}"
   network_connection = "{network_conn}"
@@ -194,6 +228,22 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
     
     return resource_block, resource_type, rule_resource_name_final, rule_id
 
+def generate_data_block_for_group(group_id):
+    """
+    Generate a data block for an Okta group lookup.
+    For example:
+    data "okta_group" "group_00gq12s54WHn2SW3o4x6" {
+      id = "00gq12s54WHn2SW3o4x6"
+    }
+    """
+    resource_name = f"group_{group_id}"
+    lines = [
+        f'data "okta_group" "{resource_name}" {{',
+        f'  id = "{group_id}"',
+        "}"
+    ]
+    return "\n".join(lines)
+
 def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
     """
     Generate the complete Terraform configuration content.
@@ -202,9 +252,12 @@ def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
     """
     resource_blocks = []
     import_blocks = []
+    global_group_ids = set()
     
     for policy in policies:
-        pol_block, pol_type, pol_name, pol_id = generate_terraform_from_policy(policy, is_oie_flag)
+        if policy.get("type") != "MFA_ENROLL":
+            continue
+        pol_block, pol_type, pol_name, pol_id = generate_terraform_from_policy(policy, is_oie_flag, global_group_ids)
         resource_blocks.append(pol_block)
         # Generate the import block for the policy:
         import_blocks.append(f'''import {{
@@ -228,7 +281,13 @@ def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
     
     import_section = "\n\n".join(import_blocks)
     resources_section = "\n\n".join(resource_blocks)
-    full_content = import_section + "\n\n\n" + resources_section
+    # Generate data blocks for groups.
+    data_blocks = []
+    for group_id in sorted(global_group_ids):
+        data_blocks.append(generate_data_block_for_group(group_id))
+    data_section = "\n\n".join(data_blocks)
+    
+    full_content = data_section + "\n\n" + import_section + "\n\n\n" + resources_section
     return full_content
 
 def run_terraform_fmt(file_path):
