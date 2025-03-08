@@ -105,6 +105,7 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 
 - **--tf-fmt**  
   *Run `terraform fmt` on the generated file.*
+
 </details>
 
 ---
@@ -142,7 +143,9 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 
 - **--terraform-fmt**  
   *Run `terraform fmt` on the generated file.*
+
 </details>
+
 ---
 
 ## Global Session Policies
