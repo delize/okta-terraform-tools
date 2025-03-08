@@ -13,12 +13,12 @@ This repository contains a collection of Python-based tools for generating Terra
 
 ## Installation
 
-	1.	Clone the Repository:
+1.	Clone the Repository:
 ```sh
 git clone https://github.com/yourusername/okta-terraform-tools.git
 cd okta-terraform-tools
 ```
-    2.	Install Required Python Libraries:
+2.	Install Required Python Libraries:
 It is recommended to use a virtual environment:
 ```sh
 python3 -m venv venv
