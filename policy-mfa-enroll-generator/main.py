@@ -4,6 +4,20 @@ import json
 import subprocess
 import requests
 import sys
+import re
+
+def normalize_name(name):
+    """
+    Normalize a string for use in a Terraform resource name:
+    - Convert to lowercase.
+    - Replace any non-alphanumeric character with an underscore.
+    - Collapse multiple underscores into one.
+    - Strip leading/trailing underscores.
+    """
+    name = name.lower()
+    name = re.sub(r'[^a-z0-9]', '_', name)
+    name = re.sub(r'_+', '_', name)
+    return name.strip('_')
 
 def construct_okta_domain(subdomain, domain, full_domain):
     """
@@ -105,8 +119,13 @@ def generate_terraform_from_policy(policy, is_oie_flag, global_groups):
     priority_str = str(priority) if priority is not None else "null"
     policy_id = policy.get("id", "")
     
+    # Use the normalized policy name plus the normalized ID to form resource_name (name_id)
+    name = policy.get("name", "default_policy")
+    norm_name = normalize_name(name)
+    norm_id = policy_id.replace("-", "_")
+    resource_name = f"{norm_name}_{norm_id}"
+    
     if not is_default:
-        name = policy.get("name", "Unnamed_Policy")
         description = policy.get("description", "")
         status = policy.get("status", "ACTIVE")
         groups = policy.get("conditions", {}).get("people", {}).get("groups", {}).get("include", [])
@@ -128,7 +147,6 @@ def generate_terraform_from_policy(policy, is_oie_flag, global_groups):
                 enroll = details.get("enroll", {}).get("self")
                 terraform_settings += f'  {factor} = {{\n    enroll = "{enroll}"\n  }}\n'
         
-        resource_name = name.replace(" ", "_").lower()
         resource_block = f'''resource "okta_policy_mfa" "{resource_name}" {{
   name            = "{name}"
   description     = "{description}"
@@ -151,7 +169,6 @@ def generate_terraform_from_policy(policy, is_oie_flag, global_groups):
                 enroll = details.get("enroll", {}).get("self")
                 terraform_settings += f'  {factor} = {{\n    enroll = "{enroll}"\n  }}\n'
         
-        resource_name = policy.get("name", "default_policy").replace(" ", "_").lower()
         resource_block = f'''resource "okta_policy_mfa_default" "{resource_name}" {{
   is_oie = {str(is_oie_flag).lower()}
 {terraform_settings}}}'''
@@ -172,10 +189,15 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
       (resource_block, resource_type, resource_name, rule_id)
     """
     rule_id = rule.get("id", "")
+    # Create a combined resource name using normalized rule name and rule ID
+    rule_name = rule.get("name", "unnamed_rule")
+    norm_rule = normalize_name(rule_name)
+    norm_rule_id = rule_id.replace("-", "_")
+    rule_resource_name_final = f"{norm_rule}_{norm_rule_id}"
+    
     depends_line = f'  depends_on = [ {policy_resource_type}.{policy_resource_name} ]'
     
     if is_oie_flag:
-        rule_name = rule.get("name", "unnamed_rule")
         enroll = rule.get("actions", {}).get("enroll", {}).get("self", "null")
         network_conn = rule.get("conditions", {}).get("network", {}).get("connection", "ANYWHERE")
         network_excludes = rule.get("conditions", {}).get("network", {}).get("excludes")
@@ -187,10 +209,6 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
         status = rule.get("status", "ACTIVE")
         users_excluded = rule.get("conditions", {}).get("people", {}).get("users", {}).get("exclude", [])
         users_excluded_str = f'jsonencode({json.dumps(users_excluded)})' if users_excluded else "null"
-        
-        rule_resource_name_final = f"{policy_resource_name}_{rule_name.replace(' ', '_').lower()}"
-        # Use interpolation for the parent's policy id.
-        # For example, this outputs: okta_policy_mfa.passwordless_requirement.id
         rule_policy_id = f"{policy_resource_type}.{policy_resource_name}.id"
         resource_block = f'''resource "okta_policy_rule_mfa" "{rule_resource_name_final}" {{
   policy_id = {rule_policy_id}
@@ -206,7 +224,6 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
 }}'''
         resource_type = "okta_policy_rule_mfa"
     else:
-        rule_name = rule.get("name", "unnamed_rule")
         status = rule.get("status", "ACTIVE")
         priority = rule.get("priority")
         priority_str = str(priority) if priority is not None else "null"
@@ -214,7 +231,6 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_r
         actions = rule.get("actions", {})
         conditions_str = f'jsonencode({json.dumps(conditions)})' if conditions else "null"
         actions_str = f'jsonencode({json.dumps(actions)})' if actions else "null"
-        rule_resource_name_final = f"{policy_resource_name}_{rule_name.replace(' ', '_').lower()}"
         resource_block = f'''resource "okta_policy_mfa_rule" "{rule_resource_name_final}" {{
   policy_id = "{policy_id}"
   name      = "{rule_name}"

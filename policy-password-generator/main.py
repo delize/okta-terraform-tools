@@ -268,7 +268,8 @@ def main():
             base_name = normalize_name(rule.get("name", rule_id))
             normalized_rule_id = rule_id.replace("-", "_")
             combined_rule_name = f"{base_name}_{normalized_rule_id}"
-            import_blocks.append(generate_import_block("okta_policy_rule_password", combined_rule_name, rule_id))
+            # Note: The import block for a rule now uses the format <policy_id>/<rule_id>
+            import_blocks.append(generate_import_block("okta_policy_rule_password", combined_rule_name, f"{policy_id}/{rule_id}"))
             resource_blocks.append(rule_block)
 
     data_blocks = []
