@@ -53,12 +53,8 @@ This document summarizes the pre-commit hooks used in this repository, including
 
 ## Custom Local Hooks
 
-- **check-okta-group-rule-quotes**  
-  *Script:* `.git-hooks/check_okta_group_rule_quotes.sh`  
-  *Purpose:* Scans Terraform files for unescaped quotes in Okta group rules to ensure proper escaping of string values.
-
 - **api-key-check**  
-  *Script:* `.git-hooks/pre-commit-api-key.sh`  
+  *Script:* `pre-commit-api-key.sh`  
   *Purpose:* Detects accidental inclusion of API keys in committed files to prevent secret leakage.
 
 - **duplicate-schema-indexes**  
@@ -67,7 +63,7 @@ This document summarizes the pre-commit hooks used in this repository, including
 
 - **escape-quotes**  
   *Script:* `escape-quotes.sh`  
-  *Purpose:* Ensures that quotes in Terraform files are correctly escaped, helping avoid syntax errors.
+  *Purpose:* Scans Terraform files for unescaped quotes in Okta group resources to ensure proper escaping of string values.
 
 ---
 
