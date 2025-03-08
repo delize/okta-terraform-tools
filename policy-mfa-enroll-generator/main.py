@@ -128,17 +128,21 @@ def generate_terraform_from_policy(policy, is_oie_flag):
     
     return resource_block, resource_type, resource_name, policy_id
 
-def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_flag):
+def generate_terraform_from_rule(rule, policy_id, policy_resource_name, policy_resource_type, is_oie_flag):
     """
     Generate a Terraform resource block for a rule.
     
     For OIE organizations, generate an okta_policy_rule_mfa resource using the new schema.
     For Classic organizations, generate an okta_policy_mfa_rule resource using inline JSON.
     
+    Adds a depends_on statement so the rule depends on its parent policy.
+    
     Returns a tuple:
       (resource_block, resource_type, resource_name, rule_id)
     """
     rule_id = rule.get("id", "")
+    depends_line = f'  depends_on = [ {policy_resource_type}.{policy_resource_name} ]'
+    
     if is_oie_flag:
         rule_name = rule.get("name", "unnamed_rule")
         enroll = rule.get("actions", {}).get("enroll", {}).get("self", "null")
@@ -164,6 +168,7 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_f
   priority  = {priority_str}
   status    = "{status}"
   users_excluded = {users_excluded_str}
+{depends_line}
 }}'''
         resource_type = "okta_policy_rule_mfa"
     else:
@@ -183,6 +188,7 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_f
   priority  = {priority_str}
   conditions = {conditions_str}
   actions    = {actions_str}
+{depends_line}
 }}'''
         resource_type = "okta_policy_mfa_rule"
     
@@ -191,8 +197,8 @@ def generate_terraform_from_rule(rule, policy_id, policy_resource_name, is_oie_f
 def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
     """
     Generate the complete Terraform configuration content.
-    For each policy and its rules, collect the resource blocks and also structured import info.
-    At the top, output import blocks in HCL syntax.
+    For each policy and its rules, collect the resource blocks and structured import info.
+    Prepend an import section in HCL syntax at the top.
     """
     resource_blocks = []
     import_blocks = []
@@ -213,7 +219,7 @@ def generate_terraform_file(policies, okta_domain, api_token, is_oie_flag):
             continue
         
         for rule in rules:
-            rule_block, rule_type, rule_name, rule_id = generate_terraform_from_rule(rule, pol_id, pol_name, is_oie_flag)
+            rule_block, rule_type, rule_name, rule_id = generate_terraform_from_rule(rule, pol_id, pol_name, pol_type, is_oie_flag)
             resource_blocks.append(rule_block)
             import_blocks.append(f'''import {{
   to = {rule_type}.{rule_name}
