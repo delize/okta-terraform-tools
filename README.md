@@ -255,7 +255,7 @@ Usage: python generate_move_blocks.py input_file output_file
 
 ---
 
-## Policy MFA ENroll Generator
+## Policy MFA Enroll Generator
 
 - **--subdomain**  
 *Subdomain for the Okta domain.*
