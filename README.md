@@ -27,6 +27,50 @@ pip install -r requirements.txt
 ```
 (If a requirements.txt file is not provided, the tools primarily use the standard libraries along with requests.)
 
+# pre-commit scripts for git
+
+# Pre-commit Hooks Summary
+
+This document summarizes the pre-commit hooks used in this repository, including both third-party Terraform hooks and custom local hooks. These hooks help maintain code quality, formatting consistency, and security best practices for your Okta Terraform configurations.
+
+---
+
+## Terraform Pre-commit Hooks (antonbabenko/pre-commit-terraform)
+
+- **terraform_fmt**  
+  *Purpose:* Automatically formats Terraform configuration files.
+
+- **terraform_docs**  
+  *Purpose:* Generates or updates documentation for Terraform modules based on the code.
+
+- **terraform_tflint**  
+  *Purpose:* Runs TFLint to catch Terraform linting issues, enforcing a minimum failure severity of error.
+
+- **terraform_trivy**  
+  *Purpose:* Uses Trivy to scan Terraform modules for vulnerabilities (e.g., CRITICAL severity), excluding downloaded modules.
+
+---
+
+## Custom Local Hooks
+
+- **check-okta-group-rule-quotes**  
+  *Script:* `.git-hooks/check_okta_group_rule_quotes.sh`  
+  *Purpose:* Scans Terraform files for unescaped quotes in Okta group rules to ensure proper escaping of string values.
+
+- **api-key-check**  
+  *Script:* `.git-hooks/pre-commit-api-key.sh`  
+  *Purpose:* Detects accidental inclusion of API keys in committed files to prevent secret leakage.
+
+- **duplicate-schema-indexes**  
+  *Script:* `duplicate-schema-indexes.sh`  
+  *Purpose:* Checks for duplicate indexes in Okta schema resource blocks (e.g., in user or group schema properties) to enforce unique property names.
+
+- **escape-quotes**  
+  *Script:* `escape-quotes.sh`  
+  *Purpose:* Ensures that quotes in Terraform files are correctly escaped, helping avoid syntax errors.
+
+---
+
 
 # Okta Terraform Tools - Argument Summary
 
@@ -34,7 +78,8 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 ---
 
 ## Admin Rules and Resources
-
+<details>
+  <summary>Arguments</summary>
 - **--subdomain** (required)  
   *Okta subdomain (e.g. "mydomain")*
 
@@ -60,11 +105,14 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 
 - **--tf-fmt**  
   *Run `terraform fmt` on the generated file.*
+</details>
 
 ---
 
 ## Brand Theme Generator
 
+<details>
+  <summary>Arguments</summary>
 - **--preview-subdomain**  
   *Preview subdomain (default: "preview")*
 
@@ -94,10 +142,13 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 
 - **--terraform-fmt**  
   *Run `terraform fmt` on the generated file.*
-
+</details>
 ---
 
 ## Global Session Policies
+
+<details>
+  <summary>Arguments</summary>
 
 - **--preview-subdomain**  
   *Preview subdomain (default: "preview")*
@@ -135,9 +186,14 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 - **--run-terraform-fmt**  
   *Run `terraform fmt` on the generated file.*
 
+</details>
+
 ---
 
 ## Groups and Group Rules
+
+<details>
+  <summary>Arguments</summary>
 
 - **--subdomain**  
   *Your Okta subdomain (e.g., "yourcompany")*
@@ -176,6 +232,7 @@ Each of the sections below outlines the arguments for each of the folder's pytho
 - **--generate_tf**  
   *Generate Terraform from CSV data*
 
+</details>
 ---
 
 ## Move Block Generator
@@ -188,6 +245,9 @@ Usage: python generate_move_blocks.py input_file output_file
 ---
 
 ## Policy Auth Signon Generator (Dual Env)
+
+<details>
+  <summary>Arguments</summary>
 
 - **--dual**  
 *Generate files for both preview (test) and production (prod) environments.*
@@ -234,9 +294,14 @@ Usage: python generate_move_blocks.py input_file output_file
 - **--fmt**  
 *Run `terraform fmt` on the generated Terraform files after generation.*
 
+</details>
+
 ---
 
 ## Policy Auth Generator (Single Env)
+
+<details>
+  <summary>Arguments</summary>
 
 - **--api-token**  
 *Your Okta API token. If not provided, the script will try to read the OKTA_API_TOKEN environment variable.*
@@ -253,9 +318,14 @@ Usage: python generate_move_blocks.py input_file output_file
 - **--test**  
 *Run in test mode using local JSON files for policies and rules.*
 
+</details>
+
 ---
 
 ## Policy MFA Enroll Generator
+
+<details>
+  <summary>Arguments</summary>
 
 - **--subdomain**  
 *Subdomain for the Okta domain.*
@@ -275,9 +345,14 @@ Usage: python generate_move_blocks.py input_file output_file
 - **--terraform-fmt**  
 *Run `terraform fmt` on the generated file after generation.*
 
+<details>
+
 ---
 
 ## Policy Password Generator
+
+<details>
+  <summary>Arguments</summary>
 
 - **--full-domain** (mutually exclusive with --subdomain)  
 *Your full Okta domain (e.g., "andrewdoering.okta.com").*
@@ -296,5 +371,7 @@ Usage: python generate_move_blocks.py input_file output_file
 
 - **--terraform-fmt**  
 *Run `terraform fmt` on the generated file after generation.*
+
+</details>
 
 ---
