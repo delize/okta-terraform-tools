@@ -3,14 +3,16 @@
 This repository contains a collection of Python-based tools for generating Terraform configuration from Okta API data. These tools help automate the process of importing and managing Okta resources in Terraform. They are especially useful for organizations that need to keep their Okta configuration synchronized with Terraform-managed infrastructure.
 
 
-Getting Started
+# Getting Started
 
-Prerequisites
-	•	Python 3 – The tools are written in Python.
-	•	Terraform – To run terraform fmt and manage Terraform configurations.
-	•	Okta API Token – An API token with the required permissions to fetch Okta policies and related data.
+## Prerequisites
 
-Installation
+- Python 3 – The tools are written in Python.
+- Terraform – To run terraform fmt and manage Terraform configurations.
+- Okta API Token – An API token with the required permissions to fetch Okta policies and related data.
+
+## Installation
+
 	1.	Clone the Repository:
 ```sh
 git clone https://github.com/yourusername/okta-terraform-tools.git
